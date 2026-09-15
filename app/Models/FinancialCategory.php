@@ -15,6 +15,8 @@ class FinancialCategory extends Model
         'parent_id',
         'status',
         'description',
+        'created_by',
+        'updated_by',
     ];
 
     protected $casts = [

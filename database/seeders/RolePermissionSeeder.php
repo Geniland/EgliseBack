@@ -49,7 +49,14 @@ class RolePermissionSeeder extends Seeder
                       ->orWhere('module', 'members')
                       ->orWhere('module', 'events')
                       ->orWhere('module', 'attendance')
-                      ->orWhere('module', 'finance');
+                      ->orWhere('module', 'finance')
+                      ->orWhere('module', 'resources')
+                      ->orWhere('module', 'formations')
+                      ->orWhere('module', 'purchases')
+                      ->orWhere('module', 'payments')
+                      ->orWhere('module', 'enrollments')
+                      ->orWhere('module', 'live_streams')
+                      ->orWhere('module', 'ministries');
 
             })
             ->where('name', '!=', 'finance.delete')
@@ -157,6 +164,27 @@ class RolePermissionSeeder extends Seeder
                 'finance.manage_accounts',
                 'finance.manage_categories',
 
+                'resources.view',
+                'resources.create',
+                'resources.update',
+                
+                'formations.view',
+                'formations.create',
+                'formations.update',
+
+                'live_streams.view',
+                'live_streams.create',
+                'live_streams.update',
+                'live_streams.delete',
+                'live_streams.configure',
+                'live_streams.publish',
+                'live_streams.end',
+                'live_streams.replay',
+
+                'ministries.view',
+                'ministries.create',
+                'ministries.update',
+
             ])->pluck('id');
 
             $responsable->permissions()->sync($permissions);
@@ -176,7 +204,11 @@ class RolePermissionSeeder extends Seeder
 
             $permissions = Permission::whereIn('name', [
 
-                'events.view'
+                'events.view',
+                'resources.view',
+                'formations.view',
+                'live_streams.view',
+                'ministries.view',
 
             ])->pluck('id');
 

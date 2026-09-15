@@ -186,7 +186,7 @@ class AttendanceSessionController extends Controller
         $override = (bool) $request->input('override', false);
         $createdBy = auth()->id();
 
-        $members = Member::query()->tap(fn($q) => ScopeHelper::applyOwnedByScope($q))
+        $members = Member::query()->tap(fn($q) => ScopeHelper::applyMemberScope($q))
             ->where('status', true)
             ->pluck('id');
 

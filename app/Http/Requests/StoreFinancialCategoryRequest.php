@@ -18,7 +18,15 @@ class StoreFinancialCategoryRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => 'required|string|max:150',
+            'name' => [
+                'required',
+                'string',
+                'max:150',
+                Rule::unique('financial_categories', 'name')->where(function ($q) {
+                    $type = request()->input('type');
+                    return $type ? $q->where('type', $type) : $q;
+                }),
+            ],
             'type' => 'required|string|in:' . implode(',', array_keys(FinancialCategory::types())),
             'parent_id' => [
                 'nullable',
@@ -36,20 +44,13 @@ class StoreFinancialCategoryRequest extends FormRequest
             ],
             'status' => 'nullable|boolean',
             'description' => 'nullable|string',
-            Rule::unique('financial_categories', ['name', 'type']),
         ];
     }
 
-    public function withValidator($validator): void
+    public function messages(): array
     {
-        $validator->after(function ($v) {
-            $name = $this->input('name');
-            $type = $this->input('type');
-            if (!$name || !$type) return;
-            $exists = \App\Models\FinancialCategory::where('name', $name)->where('type', $type)->exists();
-            if ($exists) {
-                $v->errors()->add('name', 'Cette catégorie existe déjà pour ce type (revenu/dépense).');
-            }
-        });
+        return [
+            'name.unique' => 'Cette catégorie existe déjà pour ce type (revenu/dépense).',
+        ];
     }
 }

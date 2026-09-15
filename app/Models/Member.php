@@ -13,6 +13,8 @@ class Member extends Model
     protected $fillable = [
 
         'member_code',
+        'church_id',
+        'user_id',
 
         'first_name',
         'last_name',
@@ -65,6 +67,22 @@ class Member extends Model
     ];
 
     /**
+     * Église à laquelle appartient le membre.
+     */
+    public function church()
+    {
+        return $this->belongsTo(Church::class, 'church_id');
+    }
+
+    /**
+     * Scope pour filtrer les membres selon l'église et les droits de l'utilisateur.
+     */
+    public function scopeForUser($query, ?User $user = null)
+    {
+        return \App\Support\ScopeHelper::applyMemberScope($query, $user);
+    }
+
+    /**
      * Utilisateur ayant créé le membre.
      */
     public function creator()
@@ -94,5 +112,13 @@ class Member extends Model
     public function ministries()
     {
         return $this->belongsToMany(Ministry::class);
+    }
+
+    /**
+     * Utilisateur lié à ce membre (pour la connexion de l'app mobile).
+     */
+    public function user()
+    {
+        return $this->belongsTo(User::class, 'user_id');
     }
 }

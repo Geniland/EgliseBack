@@ -19,7 +19,8 @@ class UpdateMemberRequest extends FormRequest
      */
     public function rules(): array
     {
-        $id = optional($this->route('member'))->id ?? 'NULL';
+        $routeMember = $this->route('member');
+        $id = $routeMember instanceof \App\Models\Member ? $routeMember->id : (int) $routeMember;
 
         return [
 
@@ -72,6 +73,10 @@ class UpdateMemberRequest extends FormRequest
             'emergency_phone' => 'nullable|string|max:30',
 
             'status' => 'nullable|boolean',
+
+            'church_id' => 'nullable|exists:churches,id',
+
+            'remove_photo' => 'nullable|boolean',
 
         ];
     }

@@ -22,7 +22,10 @@ class FinancialCategoryController extends Controller
                     ->orWhere('description', 'LIKE', "%{$request->search}%");
             })
             ->when($request->type, fn($q) => $q->where('type', $request->type))
-            ->when($request->status !== null, fn($q) => $q->where('status', (bool)$request->status))
+            ->when($request->status !== null, function ($q) use ($request) {
+                $isActive = in_array($request->status, ['active', 'true', '1', 1, true], true);
+                return $q->where('status', $isActive);
+            })
             ->when($request->active === 'true', fn($q) => $q->active())
             ->when($request->with_children !== 'true', fn($q) => $q->whereNull('parent_id'))
             ->tap(fn($q) => ScopeHelper::applyOwnedByScope($q))
@@ -39,9 +42,9 @@ class FinancialCategoryController extends Controller
             'income' => [],
             'expense' => [],
         ];
-        $q = FinancialCategory::active();
+        $q = FinancialCategory::active()->with('parent');
         ScopeHelper::applyOwnedByScope($q);
-        foreach ($q->orderBy('name')->get(['id', 'name', 'type', 'parent_id', 'description']) as $c) {
+        foreach ($q->orderBy('name')->get() as $c) {
             $byType[$c->type][] = [
                 'id' => $c->id,
                 'name' => $c->name,
@@ -49,6 +52,7 @@ class FinancialCategoryController extends Controller
                 'type' => $c->type,
                 'type_label' => $c->type_label,
                 'description' => $c->description,
+                'full_path_label' => $c->full_path_label,
             ];
         }
         return response()->json([

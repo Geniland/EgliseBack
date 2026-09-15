@@ -37,7 +37,7 @@ class FinancialAccountController extends Controller
         $accounts = FinancialAccount::active()
             ->tap(fn($q) => ScopeHelper::applyOwnedByScope($q))
             ->orderBy('name')
-            ->get(['id', 'name', 'type', 'currency']);
+            ->get(['id', 'name', 'type', 'currency', 'initial_balance']);
 
         $accounts = $accounts->map(function ($a) {
             return [

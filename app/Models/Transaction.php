@@ -318,4 +318,10 @@ class Transaction extends Model
         if (!$this->transaction_date) return '';
         return $this->transaction_date->isoFormat('dddd D MMMM YYYY');
     }
+
+    public function getFormattedApprovedAtAttribute(): ?string
+    {
+        if (!$this->approved_at) return null;
+        return $this->approved_at->isoFormat('D MMMM YYYY [à] HH:mm');
+    }
 }

@@ -185,4 +185,40 @@ class User extends Authenticatable
         $id = $user instanceof User ? $user->id : (int) $user;
         return in_array($id, $this->team_user_ids, true);
     }
+
+    /**
+     * Le profil membre associé à cet utilisateur.
+     */
+    public function member()
+    {
+        return $this->hasOne(Member::class, 'user_id');
+    }
+
+    /**
+     * Accesseur pour les initiales de l'utilisateur (avatar).
+     */
+    public function getInitialesAttribute(): string
+    {
+        $mots = explode(' ', trim($this->name ?? ''));
+        $initiales = '';
+        foreach (array_slice($mots, 0, 2) as $mot) {
+            $initiales .= strtoupper(substr($mot, 0, 1));
+        }
+        return $initiales ?: 'U';
+    }
+
+    public function sentMessages()
+    {
+        return $this->hasMany(ChatMessage::class, 'sender_id');
+    }
+
+    public function receivedMessages()
+    {
+        return $this->hasMany(ChatMessage::class, 'recipient_id');
+    }
+
+    public function assistantConversations()
+    {
+        return $this->hasMany(AssistantConversation::class, 'user_id');
+    }
 }

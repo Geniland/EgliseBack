@@ -151,4 +151,9 @@ class Event extends Model
         $statuses = self::statuses();
         return $statuses[$this->status] ?? $this->status;
     }
+
+    public function liveStream()
+    {
+        return $this->hasOne(LiveStream::class);
+    }
 }

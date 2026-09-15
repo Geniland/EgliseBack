@@ -93,6 +93,7 @@ class TransactionResource extends JsonResource
             'created_by' => $this->created_by,
             'approved_by' => $this->approved_by,
             'approved_at' => $this->approved_at?->toDateTimeString(),
+            'formatted_approved_at' => $this->formatted_approved_at,
             'updated_by' => $this->updated_by,
 
             'creator' => $this->whenLoaded('creator', function () {
@@ -102,13 +103,19 @@ class TransactionResource extends JsonResource
                     'email' => $this->creator->email,
                 ] : null;
             }),
-            'approver' => $this->whenLoaded('approver', function () {
-                return $this->approver ? [
+            'approver' => $this->relationLoaded('approver')
+                ? ($this->approver ? [
                     'id' => $this->approver->id,
                     'name' => $this->approver->name,
                     'email' => $this->approver->email,
-                ] : null;
-            }),
+                ] : null)
+                : $this->whenLoaded('approver', function () {
+                    return $this->approver ? [
+                        'id' => $this->approver->id,
+                        'name' => $this->approver->name,
+                        'email' => $this->approver->email,
+                    ] : null;
+                }),
             'updater' => $this->whenLoaded('updater', function () {
                 return $this->updater ? [
                     'id' => $this->updater->id,

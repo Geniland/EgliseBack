@@ -22,7 +22,9 @@ class MemberController extends Controller
     {
         $members = Member::with([
                 'family',
-                'ministries'
+                'ministries',
+                'church:id,name,code',
+                'user:id,name,email,church_id'
             ])
 
             ->when($request->search, function ($query) use ($request) {
@@ -59,7 +61,7 @@ class MemberController extends Controller
 
             })
 
-            ->tap(fn($q) => ScopeHelper::applyOwnedByScope($q))
+            ->tap(fn($q) => ScopeHelper::applyMemberScope($q))
 
             ->latest()
 
@@ -79,12 +81,19 @@ class MemberController extends Controller
      */
     public function show(Member $member)
     {
+        if (!ScopeHelper::canAccessMember($member)) {
+            return response()->json([
+                'message' => "Vous n'avez pas accès aux informations de ce membre."
+            ], 403);
+        }
 
         $member->load([
             'family',
             'ministries',
             'creator',
-            'updater'
+            'updater',
+            'church',
+            'user'
         ]);
 
 
@@ -99,68 +108,95 @@ class MemberController extends Controller
     /**
      * Création d'un membre
      */
-public function store(StoreMemberRequest $request)
-{
-    // Récupérer les données validées
-    $data = $request->validated();
+    public function store(StoreMemberRequest $request)
+    {
+        // Récupérer les données validées
+        $data = $request->validated();
 
-    /**
-     * Génération automatique du matricule
-     * Format: MEM-2026000001
-     */
-    $year = date('Y');
-    $lastMember = Member::whereYear('created_at', $year)
-                        ->orderBy('id', 'desc')
-                        ->first();
-    
-    if ($lastMember) {
-        // Extraire le numéro du dernier matricule
-        $lastNumber = (int) substr($lastMember->member_code, -6);
-        $number = str_pad($lastNumber + 1, 6, '0', STR_PAD_LEFT);
-    } else {
-        $number = '000001';
+        $user = auth()->user();
+        $targetChurchId = $request->input('church_id');
+
+        if ($targetChurchId) {
+            if (!ScopeHelper::isSuperAdmin()) {
+                $allowedChurches = ScopeHelper::getMyChurchIds();
+                if ($user && $user->church_id) {
+                    $allowedChurches[] = (int) $user->church_id;
+                }
+                if (!in_array((int) $targetChurchId, $allowedChurches, true)) {
+                    return response()->json([
+                        'message' => "Vous n'avez pas l'autorisation d'assigner un membre à cette église."
+                    ], 403);
+                }
+            }
+            $data['church_id'] = $targetChurchId;
+        } else {
+            $contextChurchId = ScopeHelper::getRequestedChurchContext();
+            if ($contextChurchId) {
+                $data['church_id'] = $contextChurchId;
+            } elseif ($user && $user->church_id) {
+                $data['church_id'] = $user->church_id;
+            } else {
+                $data['church_id'] = \App\Models\Church::where('created_by', auth()->id())->value('id');
+            }
+        }
+
+        /**
+         * Génération automatique du matricule
+         * Format: MEM-2026000001
+         */
+        $year = date('Y');
+        $lastMember = Member::whereYear('created_at', $year)
+                            ->orderBy('id', 'desc')
+                            ->first();
+        
+        if ($lastMember) {
+            // Extraire le numéro du dernier matricule
+            $lastNumber = (int) substr($lastMember->member_code, -6);
+            $number = str_pad($lastNumber + 1, 6, '0', STR_PAD_LEFT);
+        } else {
+            $number = '000001';
+        }
+        
+        $data['member_code'] = 'MEM-' . $year . $number;
+
+        /**
+         * Upload de la photo
+         */
+        if ($request->hasFile('photo')) {
+            $data['photo'] = $request->file('photo')->store('members', 'public');
+        }
+
+        /**
+         * Utilisateur connecté
+         */
+        $data['created_by'] = auth()->id();
+        $data['updated_by'] = auth()->id();
+
+        /**
+         * Création du membre
+         */
+        $member = Member::create($data);
+
+        /**
+         * Association des ministères
+         */
+        if ($request->has('ministries') && !empty($request->ministries)) {
+            $member->ministries()->sync($request->ministries);
+        }
+
+        /**
+         * Chargement des relations
+         */
+        $member->load(['family', 'ministries', 'church']);
+
+        /**
+         * Réponse
+         */
+        return response()->json([
+            'message' => 'Membre créé avec succès',
+            'member' => new MemberResource($member)
+        ], 201);
     }
-    
-    $data['member_code'] = 'MEM-' . $year . $number;
-
-    /**
-     * Upload de la photo
-     */
-    if ($request->hasFile('photo')) {
-        $data['photo'] = $request->file('photo')->store('members', 'public');
-    }
-
-    /**
-     * Utilisateur connecté
-     */
-    $data['created_by'] = auth()->id();
-    $data['updated_by'] = auth()->id();
-
-    /**
-     * Création du membre
-     */
-    $member = Member::create($data);
-
-    /**
-     * Association des ministères
-     */
-    if ($request->has('ministries') && !empty($request->ministries)) {
-        $member->ministries()->sync($request->ministries);
-    }
-
-    /**
-     * Chargement des relations
-     */
-    $member->load(['family', 'ministries']);
-
-    /**
-     * Réponse
-     */
-    return response()->json([
-        'message' => 'Membre créé avec succès',
-        'member' => new MemberResource($member)
-    ], 201);
-}
 
 
 
@@ -175,132 +211,155 @@ public function store(StoreMemberRequest $request)
         Member $member
     )
     {
-
+        if (!ScopeHelper::canAccessMember($member)) {
+            return response()->json([
+                'message' => "Vous n'avez pas l'autorisation de modifier ce membre."
+            ], 403);
+        }
 
         $data = $request->validated();
+
+        if ($request->filled('church_id') && (int) $request->church_id !== (int) $member->church_id) {
+            if (!ScopeHelper::isSuperAdmin()) {
+                $allowedChurches = ScopeHelper::getMyChurchIds();
+                if (auth()->user() && auth()->user()->church_id) {
+                    $allowedChurches[] = (int) auth()->user()->church_id;
+                }
+                if (!in_array((int) $request->church_id, $allowedChurches, true)) {
+                    return response()->json([
+                        'message' => "Vous ne pouvez pas déplacer ce membre vers cette église."
+                    ], 403);
+                }
+            }
+        }
 
 
 
         /**
          * Nouvelle photo
          */
-        if($request->hasFile('photo')){
-
-
-            if($member->photo){
-
-                Storage::disk('public')
-                    ->delete($member->photo);
-
+        if ($request->boolean('remove_photo')) {
+            if ($member->photo && Storage::disk('public')->exists($member->photo)) {
+                Storage::disk('public')->delete($member->photo);
+            }
+            $data['photo'] = null;
+        } elseif ($request->hasFile('photo')) {
+            if ($member->photo && Storage::disk('public')->exists($member->photo)) {
+                Storage::disk('public')->delete($member->photo);
             }
 
-
-            $data['photo'] =
-                $request
-                ->file('photo')
-                ->store(
-                    'members',
-                    'public'
-                );
-
+            $data['photo'] = $request->file('photo')->store('members', 'public');
         }
 
-
-
-
-        $data['updated_by'] =
-            auth()->id();
-
-
+        $data['updated_by'] = auth()->id();
 
         $member->update($data);
 
-
-
-
-        if($request->ministries){
-
-            $member->ministries()
-                   ->sync(
-                       $request->ministries
-                   );
-
+        // Synchroniser le compte utilisateur lié si présent
+        if ($member->user_id && $member->user) {
+            $userUpdates = [];
+            if (isset($data['first_name']) || isset($data['last_name'])) {
+                $userUpdates['name'] = ($data['first_name'] ?? $member->first_name) . ' ' . ($data['last_name'] ?? $member->last_name);
+            }
+            if (isset($data['email']) && $data['email'] !== $member->user->email) {
+                $userUpdates['email'] = $data['email'];
+            }
+            if (isset($data['phone'])) {
+                $userUpdates['phone'] = $data['phone'];
+            }
+            if (isset($data['status'])) {
+                $userUpdates['status'] = (bool) $data['status'];
+            }
+            if (isset($data['church_id'])) {
+                $userUpdates['church_id'] = $data['church_id'];
+            }
+            if (!empty($userUpdates)) {
+                $member->user->update($userUpdates);
+            }
         }
 
-
+        if ($request->ministries) {
+            $member->ministries()->sync($request->ministries);
+        }
 
         $member->load([
             'family',
-            'ministries'
+            'ministries',
+            'church',
+            'user'
         ]);
-
-
 
         return response()->json([
-
-            'message'=>'Membre modifié avec succès',
-
-            'member'=>new MemberResource($member)
-
+            'message' => 'Membre modifié avec succès',
+            'member' => new MemberResource($member)
         ]);
-
     }
 
+    /**
+     * Activer / désactiver le statut et l'accès d'un membre
+     */
+    public function toggleStatus(Member $member)
+    {
+        if (!ScopeHelper::canAccessMember($member)) {
+            return response()->json([
+                'message' => "Vous n'avez pas l'autorisation de modifier ce membre."
+            ], 403);
+        }
 
+        $member->status = !$member->status;
+        $member->updated_by = auth()->id();
+        $member->save();
 
+        if ($member->user_id && $member->user) {
+            $member->user->status = $member->status;
+            $member->user->save();
+        }
 
+        $member->load(['family', 'ministries', 'church', 'user']);
 
-
+        return response()->json([
+            'message' => $member->status ? 'Membre activé avec succès' : 'Membre désactivé avec succès',
+            'status' => $member->status,
+            'member' => new MemberResource($member)
+        ]);
+    }
 
     /**
      * Suppression logique
      */
     public function destroy(Member $member)
     {
-
+        if (!ScopeHelper::canAccessMember($member)) {
+            return response()->json([
+                'message' => "Vous n'avez pas l'autorisation de supprimer ce membre."
+            ], 403);
+        }
 
         $member->delete();
 
-
-
         return response()->json([
-
-            'message'=>'Membre supprimé avec succès'
-
+            'message' => 'Membre supprimé avec succès'
         ]);
-
     }
-
-
-
-
-
-
 
     /**
      * Restaurer un membre supprimé
      */
     public function restore($id)
     {
+        $member = Member::withTrashed()->findOrFail($id);
 
-
-        $member = Member::withTrashed()
-                        ->findOrFail($id);
-
-
+        if (!ScopeHelper::canAccessMember($member)) {
+            return response()->json([
+                'message' => "Vous n'avez pas l'autorisation de restaurer ce membre."
+            ], 403);
+        }
 
         $member->restore();
 
-
-
         return response()->json([
-
-            'message'=>'Membre restauré',
-
-            'member'=>new MemberResource($member)
-
+            'message' => 'Membre restauré',
+            'member' => new MemberResource($member)
         ]);
-
     }
-
 }

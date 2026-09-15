@@ -19,7 +19,11 @@ class UpdateAttendanceSessionRequest extends FormRequest
             'session_date' => 'sometimes|required|date',
             'start_time' => 'sometimes|required|date_format:H:i,H:i:s',
             'end_time' => 'sometimes|required|date_format:H:i,H:i:s',
-            'type' => ['sometimes', 'required', Rule::in(['Culte', 'Prière', 'Étude biblique', 'Réunion', 'Formation', 'Autre'])],
+            'type' => ['nullable', Rule::in([
+                'Culte dominical', 'Réunion de prière', 'Étude biblique', 
+                'Réunion des jeunes', 'Culte des enfants', 'Mariage', 
+                'Baptême', 'Conférence', 'Atelier de formation', 'Autre'
+            ])],
             'description' => 'sometimes|nullable|string|max:1000',
             'location' => 'sometimes|nullable|string|max:255',
             'latitude' => 'sometimes|nullable|numeric|between:-90,90',

@@ -71,6 +71,8 @@ class StoreMemberRequest extends FormRequest
 
             'status' => 'nullable|boolean',
 
+            'church_id' => 'nullable|exists:churches,id',
+
         ];
     }
 }

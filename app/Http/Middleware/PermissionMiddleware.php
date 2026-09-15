@@ -24,9 +24,17 @@ class PermissionMiddleware
 
         $user = $request->user();
 
+        if (!$user->role) {
+            return response()->json([
+                'message' => 'Vous n\'avez pas de rôle assigné'
+            ], 403);
+        }
+
+        $permissions = explode('|', $permission);
+
         $hasPermission = $user->role
                             ->permissions()
-                            ->where('name', $permission)
+                            ->whereIn('name', $permissions)
                             ->exists();
 
         if (!$hasPermission) {

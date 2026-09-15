@@ -10,16 +10,14 @@ class Ministry extends Model
     use HasFactory;
 
     protected $fillable = [
-
         'name',
-
         'description',
-
         'status',
-
+        'church_id',
+        'leader_id',
+        'meeting_schedule',
         'created_by',
         'updated_by',
-
     ];
 
 
@@ -37,6 +35,16 @@ class Ministry extends Model
     {
         return $this->belongsToMany(Member::class)
                     ->withTimestamps();
+    }
+
+    public function church()
+    {
+        return $this->belongsTo(Church::class);
+    }
+
+    public function leader()
+    {
+        return $this->belongsTo(Member::class, 'leader_id');
     }
 
     public function creator()

@@ -91,16 +91,26 @@ class ScopeHelper
      * Super Admin => [] (vide = toutes).
      * Non connecté => [0].
      */
-    public static function getMyChurchIds(): array
+    public static function getMyChurchIds(?int $userId = null): array
     {
-        if (self::isSuperAdmin()) {
-            return [];
+        if ($userId === null) {
+            if (self::isSuperAdmin()) {
+                return [];
+            }
+            $userId = auth()->id();
+        } else {
+            $user = ($userId === auth()->id() && auth()->check()) ? auth()->user() : User::find($userId);
+            if ($user && ((int) $user->role_id === 1 || optional($user->role)->name === 'Super Admin')) {
+                return [];
+            }
         }
-        $userId = auth()->id();
+
         if (!$userId) {
             return [0];
         }
+
         try {
+            $user = ($userId === auth()->id() && auth()->check()) ? auth()->user() : User::find($userId);
             $topLevelChurches = Church::query()
                 ->where('created_by', $userId)
                 ->get();
@@ -109,7 +119,7 @@ class ScopeHelper
                 $ids = array_merge($ids, $c->team_church_ids);
             }
             // Ajouter aussi l'église de l'utilisateur lui-même (si l'admin a été créé par Super Admin sur une église)
-            $selfChurchId = (int) (auth()->user()->church_id ?? 0);
+            $selfChurchId = (int) (optional($user)->church_id ?? 0);
             if ($selfChurchId > 0 && !in_array($selfChurchId, $ids, true)) {
                 $ids[] = $selfChurchId;
                 $selfChurch = Church::find($selfChurchId);
@@ -191,7 +201,10 @@ class ScopeHelper
             return $query->whereRaw('0 = 1');
         }
 
-        return $query->whereIn($column, $teamIds);
+        return $query->where(function ($q) use ($column, $teamIds) {
+            $q->whereIn($column, $teamIds)
+              ->orWhereNull($column);
+        });
     }
 
     /**
@@ -207,11 +220,38 @@ class ScopeHelper
     {
         $query = $modelClass::query();
         if (!self::isSuperAdmin()) {
-            $teamIds = self::getTeamUserIds();
-            if (empty($teamIds) || (count($teamIds) === 1 && (int) $teamIds[0] === 0)) {
-                throw (new ModelNotFoundException())->setModel($modelClass, is_array($id) ? $id : [$id]);
+            if ($column === 'church_id') {
+                $myChurchIds = self::getMyChurchIds();
+                $userChurchId = auth()->user()?->church_id;
+                if ($userChurchId) {
+                    $myChurchIds[] = (int) $userChurchId;
+                    $church = Church::find($userChurchId);
+                    if ($church && $church->parent_church_id) {
+                        $myChurchIds[] = (int) $church->parent_church_id;
+                    }
+                }
+                $myChurchIds = array_values(array_unique(array_filter(array_map('intval', $myChurchIds))));
+                $userId = auth()->id() ?: 0;
+
+                $query->where(function ($q) use ($myChurchIds, $userId) {
+                    if (!empty($myChurchIds)) {
+                        $q->whereIn('church_id', $myChurchIds);
+                    }
+                    if ($userId) {
+                        $q->orWhere('created_by', $userId);
+                    }
+                    $q->orWhereNull('church_id');
+                });
+            } else {
+                $teamIds = self::getTeamUserIds();
+                if (empty($teamIds) || (count($teamIds) === 1 && (int) $teamIds[0] === 0)) {
+                    throw (new ModelNotFoundException())->setModel($modelClass, is_array($id) ? $id : [$id]);
+                }
+                $query->where(function ($q) use ($column, $teamIds) {
+                    $q->whereIn($column, $teamIds)
+                      ->orWhereNull($column);
+                });
             }
-            $query->whereIn($column, $teamIds);
         }
         if (method_exists($modelClass, 'bootSoftDeletes')) {
             // Let the model handle its own soft-delete resolution via resolveSoftDeletableRouteBinding
@@ -231,6 +271,29 @@ class ScopeHelper
         if (self::isSuperAdmin()) {
             return true;
         }
+        if ($column === 'church_id') {
+            $myChurchIds = self::getMyChurchIds();
+            $userChurchId = auth()->user()?->church_id;
+            if ($userChurchId) {
+                $myChurchIds[] = (int) $userChurchId;
+            }
+            $myChurchIds = array_values(array_unique(array_filter(array_map('intval', $myChurchIds))));
+            $userId = auth()->id() ?: 0;
+
+            return $modelClass::query()
+                ->whereKey($id)
+                ->where(function ($q) use ($myChurchIds, $userId) {
+                    if (!empty($myChurchIds)) {
+                        $q->whereIn('church_id', $myChurchIds);
+                    }
+                    if ($userId) {
+                        $q->orWhere('created_by', $userId);
+                    }
+                    $q->orWhereNull('church_id');
+                })
+                ->exists();
+        }
+
         $teamIds = self::getTeamUserIds();
         if (empty($teamIds) || (count($teamIds) === 1 && (int) $teamIds[0] === 0)) {
             return false;
@@ -238,18 +301,16 @@ class ScopeHelper
         try {
             return $modelClass::query()
                 ->whereKey($id)
-                ->whereIn($column, $teamIds)
+                ->where(function ($q) use ($column, $teamIds) {
+                    $q->whereIn($column, $teamIds)
+                      ->orWhereNull($column);
+                })
                 ->exists();
         } catch (\Throwable) {
             return false;
         }
     }
 
-    /**
-     * Liste de mes églises (pour le dropdown Select Church de la topbar).
-     * Super Admin retourne toutes les églises actives.
-     * Sinon mes églises (created_by = moi + église où je suis affecté + descendants).
-     */
     public static function listMyChurches(): array
     {
         $q = Church::with(['parent:id,name,code'])->orderBy('name');
@@ -274,5 +335,178 @@ class ScopeHelper
                 'members_count' => (int) ($c->users_count ?? 0),
             ])
             ->all();
+    }
+
+    /**
+     * Applique le filtrage par église pour les ressources et formations.
+     * Une ressource est visible par son église créatrice et toutes ses sous-églises.
+     * Pour un fidèle, cela signifie qu'il voit les ressources de son église + celles de son église mère.
+     */
+    public static function applyChurchScope(Builder $query): Builder
+    {
+        if (self::isSuperAdmin()) {
+            return $query;
+        }
+
+        $userId = auth()->id();
+        if (!$userId) {
+            return $query->whereRaw('0 = 1');
+        }
+
+        $myIds = self::getMyChurchIds(); 
+        
+        $userChurchId = auth()->user()->church_id;
+        if ($userChurchId) {
+            $church = Church::find($userChurchId);
+            if ($church && $church->parent_church_id) {
+                $myIds[] = $church->parent_church_id;
+                // Si l'église mère a elle-même une mère (grand-mère)
+                $parent = Church::find($church->parent_church_id);
+                if ($parent && $parent->parent_church_id) {
+                    $myIds[] = $parent->parent_church_id;
+                }
+            }
+        }
+        
+        $myIds = array_unique(array_filter(array_map('intval', $myIds)));
+        
+        if (empty($myIds)) {
+            return $query->whereRaw('0 = 1');
+        }
+
+        return $query->whereIn('church_id', $myIds);
+    }
+
+    /**
+     * Applique le filtrage strict des membres :
+     * - Super Admin (1) : voit tous les membres de toutes les églises.
+     * - Administrateur (2) : voit tous les membres de son église et de ses sous-églises (ou du contexte sélectionné).
+     * - Responsable (5) : voit UNIQUEMENT les membres créés par lui OU dont le code d'église a été utilisé (église du responsable).
+     * - Autre personnel église : restreint à leur église d'affectation ou aux membres qu'ils ont créés.
+     */
+    public static function applyMemberScope(Builder $query, ?User $user = null): Builder
+    {
+        if (self::isSuperAdmin()) {
+            return $query;
+        }
+
+        if (!$user && auth()->check()) {
+            $user = auth()->user();
+        }
+
+        if (!$user) {
+            return $query->whereRaw('0 = 1');
+        }
+
+        $roleId = (int) $user->role_id;
+
+        // Super Admin
+        if ($roleId === 1) {
+            return $query;
+        }
+
+        // Administrateur (Role 2)
+        if ($roleId === 2) {
+            $contextChurchId = self::getRequestedChurchContext();
+            $adminChurchIds = $contextChurchId ? [$contextChurchId] : self::getMyChurchIds($user->id);
+            $teamUserIds = self::getTeamUserIds($user->id);
+
+            return $query->where(function ($q) use ($adminChurchIds, $teamUserIds) {
+                $hasChurches = !empty($adminChurchIds) && !(count($adminChurchIds) === 1 && (int)$adminChurchIds[0] === 0);
+                $hasTeam = !empty($teamUserIds) && !(count($teamUserIds) === 1 && (int)$teamUserIds[0] === 0);
+
+                if ($hasChurches) {
+                    $q->whereIn('members.church_id', $adminChurchIds)
+                      ->orWhereHas('user', fn($uq) => $uq->whereIn('church_id', $adminChurchIds));
+                }
+
+                if ($hasTeam) {
+                    if ($hasChurches) {
+                        $q->orWhereIn('members.created_by', $teamUserIds);
+                    } else {
+                        $q->whereIn('members.created_by', $teamUserIds);
+                    }
+                }
+
+                if (!$hasChurches && !$hasTeam) {
+                    $q->whereRaw('0 = 1');
+                }
+            });
+        }
+
+        // Responsable d'une église (Role 5) ou personnel affecté à une église
+        $churchIds = [];
+        if ($user->church_id) {
+            $churchIds[] = (int) $user->church_id;
+        }
+        $createdChurchIds = Church::where('created_by', $user->id)->pluck('id')->all();
+        $churchIds = array_values(array_unique(array_filter(array_merge($churchIds, $createdChurchIds))));
+
+        return $query->where(function ($q) use ($churchIds, $user) {
+            if (!empty($churchIds)) {
+                $q->whereIn('members.church_id', $churchIds)
+                  ->orWhereHas('user', fn($uq) => $uq->whereIn('church_id', $churchIds))
+                  ->orWhere('members.created_by', $user->id);
+            } else {
+                $q->where('members.created_by', $user->id);
+            }
+        });
+    }
+
+    /**
+     * Vérifie si l'utilisateur courant ou spécifié a le droit d'accéder au membre donné.
+     */
+    public static function canAccessMember(\App\Models\Member $member, ?User $user = null): bool
+    {
+        if (self::isSuperAdmin()) {
+            return true;
+        }
+
+        if (!$user && auth()->check()) {
+            $user = auth()->user();
+        }
+
+        if (!$user) {
+            return false;
+        }
+
+        $roleId = (int) $user->role_id;
+        if ($roleId === 1) {
+            return true;
+        }
+
+        // Si créé par l'utilisateur lui-même
+        if ($member->created_by && (int) $member->created_by === (int) $user->id) {
+            return true;
+        }
+
+        $memberChurchId = (int) ($member->church_id ?: (optional($member->user)->church_id ?: 0));
+
+        // Administrateur (Role 2)
+        if ($roleId === 2) {
+            $adminChurchIds = self::getMyChurchIds($user->id);
+            if ($memberChurchId > 0 && in_array($memberChurchId, $adminChurchIds, true)) {
+                return true;
+            }
+            $teamUserIds = self::getTeamUserIds($user->id);
+            if ($member->created_by && in_array((int) $member->created_by, $teamUserIds, true)) {
+                return true;
+            }
+            return false;
+        }
+
+        // Responsable (Role 5) ou autre
+        $churchIds = [];
+        if ($user->church_id) {
+            $churchIds[] = (int) $user->church_id;
+        }
+        $createdChurchIds = Church::where('created_by', $user->id)->pluck('id')->all();
+        $churchIds = array_values(array_unique(array_filter(array_merge($churchIds, $createdChurchIds))));
+
+        if ($memberChurchId > 0 && in_array($memberChurchId, $churchIds, true)) {
+            return true;
+        }
+
+        return false;
     }
 }

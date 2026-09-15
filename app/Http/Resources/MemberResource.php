@@ -56,11 +56,25 @@ class MemberResource extends JsonResource
 
             'photo' => $this->photo,
 
+            'photo_url' => $this->photo ? (str_starts_with($this->photo, 'http') ? $this->photo : asset('storage/' . $this->photo)) : null,
+
             'emergency_contact' => $this->emergency_contact,
 
             'emergency_phone' => $this->emergency_phone,
 
             'status' => $this->status,
+
+            'church_id' => $this->church_id,
+
+            'church' => $this->church ? [
+                'id' => $this->church->id,
+                'name' => $this->church->name,
+                'code' => $this->church->code,
+            ] : ($this->user && $this->user->church ? [
+                'id' => $this->user->church->id,
+                'name' => $this->user->church->name,
+                'code' => $this->user->church->code,
+            ] : null),
 
             'family' => $this->whenLoaded('family'),
 

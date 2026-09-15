@@ -16,12 +16,19 @@ use App\Http\Controllers\Api\TransactionController;
 use App\Http\Controllers\Api\TransactionAttachmentController;
 use App\Http\Controllers\Api\ChurchController;
 use App\Http\Controllers\Api\ChurchStaffController;
+use App\Http\Controllers\Api\ResourceCategoryController;
+use App\Http\Controllers\Api\ResourceController;
+use App\Http\Controllers\Api\FormationController;
+use App\Http\Controllers\Api\EnrollmentController;
+use App\Http\Controllers\Api\LiveStreamController;
+use App\Http\Controllers\Api\MinistryController;
+use App\Http\Controllers\Api\AssistantController;
+use App\Http\Controllers\Api\ChatController;
 
 
-
-Route::get('/user', function (Request $request) {
-    return $request->user()->load(['role', 'fonction']);
-})->middleware('auth:sanctum');
+// Route::get('/user', function (Request $request) {
+//     return $request->user()->load(['role', 'fonction']);
+// })->middleware('auth:sanctum');
 
 
 
@@ -131,7 +138,12 @@ Route::middleware([
 Route::middleware([
     'auth:sanctum',
     'permission:members.update'
-])->put('/members/{member}', [MemberController::class, 'update']);
+])->match(['PUT', 'POST'], '/members/{member}', [MemberController::class, 'update']);
+
+Route::middleware([
+    'auth:sanctum',
+    'permission:members.update'
+])->patch('/members/{member}/toggle-status', [MemberController::class, 'toggleStatus']);
 
 Route::middleware([
     'auth:sanctum',
@@ -360,13 +372,22 @@ Route::middleware(['auth:sanctum', 'permission:finance.attachments'])->group(fun
 Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::get('/referentiels/financial-categories', function () {
+        $mapCat = fn($c) => [
+            'id' => $c->id,
+            'name' => $c->name,
+            'type' => $c->type,
+            'parent_id' => $c->parent_id,
+            'description' => $c->description,
+            'full_path_label' => $c->full_path_label,
+        ];
+
         $qIncome = \App\Models\FinancialCategory::active()->income();
         \App\Support\ScopeHelper::applyOwnedByScope($qIncome);
-        $incomes = $qIncome->orderBy('name')->get(['id', 'name', 'type', 'parent_id', 'description']);
+        $incomes = $qIncome->with('parent')->orderBy('name')->get()->map($mapCat);
 
         $qExpense = \App\Models\FinancialCategory::active()->expense();
         \App\Support\ScopeHelper::applyOwnedByScope($qExpense);
-        $expenses = $qExpense->orderBy('name')->get(['id', 'name', 'type', 'parent_id', 'description']);
+        $expenses = $qExpense->with('parent')->orderBy('name')->get()->map($mapCat);
 
         return response()->json([
             'types' => \App\Models\FinancialCategory::types(),
@@ -394,7 +415,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/referentiels/financial-accounts', function () {
         $q = \App\Models\FinancialAccount::active();
         \App\Support\ScopeHelper::applyOwnedByScope($q);
-        $accounts = $q->orderBy('name')->get(['id', 'name', 'type', 'currency']);
+        $accounts = $q->orderBy('name')->get(['id', 'name', 'type', 'currency', 'initial_balance']);
         return response()->json($accounts->map(fn($a) => [
             'id' => $a->id,
             'name' => $a->name,
@@ -468,6 +489,101 @@ Route::middleware('auth:sanctum')->get('/referentiels/event-types', function () 
         'types' => \App\Models\Event::types(),
         'statuses' => \App\Models\Event::statuses(),
     ]);
+});
+
+/*
+|--------------------------------------------------------------------------
+| MODULE LIVE STREAMING
+|--------------------------------------------------------------------------
+*/
+
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/live-streams/active', [LiveStreamController::class, 'active']);
+    
+    Route::get('/live-streams', [LiveStreamController::class, 'index'])->middleware('permission:live_streams.view');
+    Route::post('/live-streams', [LiveStreamController::class, 'store'])->middleware('permission:live_streams.create');
+    Route::get('/live-streams/{liveStream}', [LiveStreamController::class, 'show'])->middleware('permission:live_streams.view');
+    Route::put('/live-streams/{liveStream}', [LiveStreamController::class, 'update'])->middleware('permission:live_streams.update');
+    Route::delete('/live-streams/{liveStream}', [LiveStreamController::class, 'destroy'])->middleware('permission:live_streams.delete');
+
+    Route::post('/live-streams/{liveStream}/start', [LiveStreamController::class, 'start'])->middleware('permission:live_streams.publish');
+    Route::get('/live-streams/{liveStream}/status', [LiveStreamController::class, 'status']);
+    Route::post('/live-streams/{liveStream}/end', [LiveStreamController::class, 'end'])->middleware('permission:live_streams.end');
+    Route::post('/live-streams/{liveStream}/publish-resource', [LiveStreamController::class, 'publishAsResource'])->middleware('permission:live_streams.publish');
+});
+
+/*
+|--------------------------------------------------------------------------
+| MODULE RESSOURCES ET FORMATIONS
+|--------------------------------------------------------------------------
+*/
+
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Catégories
+    Route::get('/resource-categories', [ResourceCategoryController::class, 'index']);
+    Route::post('/resource-categories', [ResourceCategoryController::class, 'store'])->middleware('permission:resources.create|formations.create');
+    Route::put('/resource-categories/{category}', [ResourceCategoryController::class, 'update'])->middleware('permission:resources.update|formations.update');
+    Route::delete('/resource-categories/{category}', [ResourceCategoryController::class, 'destroy'])->middleware('permission:resources.delete|formations.delete');
+
+    // Ressources
+    Route::get('/resources', [ResourceController::class, 'index'])->middleware('permission:resources.view');
+    Route::get('/resources/{id}', [ResourceController::class, 'show'])->middleware('permission:resources.view')->whereNumber('id');
+    Route::get('/resources/{id}/download', [ResourceController::class, 'download'])->middleware('permission:resources.view')->whereNumber('id');
+    Route::post('/resources', [ResourceController::class, 'store'])->middleware('permission:resources.create');
+    Route::match(['post', 'put'], '/resources/{id}', [ResourceController::class, 'update'])->middleware('permission:resources.update')->whereNumber('id'); // POST/PUT pour upload file
+    Route::delete('/resources/{id}', [ResourceController::class, 'destroy'])->middleware('permission:resources.delete')->whereNumber('id');
+
+    // Inscriptions aux formations (Fidèle/Utilisateur - placé avant les routes {id} pour éviter tout conflit)
+    Route::get('/my-formations', [EnrollmentController::class, 'myFormations']);
+    Route::post('/formations/enroll', [EnrollmentController::class, 'enroll']);
+
+    // Formations
+    Route::get('/formations', [FormationController::class, 'index'])->middleware('permission:formations.view');
+    Route::post('/formations', [FormationController::class, 'store'])->middleware('permission:formations.create');
+    Route::get('/formations/{id}', [FormationController::class, 'show'])->middleware('permission:formations.view')->whereNumber('id');
+    Route::match(['post', 'put'], '/formations/{id}', [FormationController::class, 'update'])->middleware('permission:formations.update')->whereNumber('id');
+    Route::delete('/formations/{id}', [FormationController::class, 'destroy'])->middleware('permission:formations.delete')->whereNumber('id');
+    Route::post('/formations/{id}/modules', [FormationController::class, 'addModule'])->middleware('permission:formations.update')->whereNumber('id');
+    Route::delete('/formations/{id}/modules/{moduleId}', [FormationController::class, 'deleteModule'])->middleware('permission:formations.update')->whereNumber(['id', 'moduleId']);
+    Route::post('/formations/{id}/modules/{moduleId}/contents', [FormationController::class, 'addContent'])->middleware('permission:formations.update')->whereNumber(['id', 'moduleId']);
+    Route::delete('/formations/{id}/contents/{contentId}', [FormationController::class, 'deleteContent'])->middleware('permission:formations.update')->whereNumber(['id', 'contentId']);
+});
+
+/*
+|--------------------------------------------------------------------------
+| MODULE SERVICES ET MINISTERES
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/ministries', [MinistryController::class, 'index'])->middleware('permission:ministries.view');
+    Route::post('/ministries', [MinistryController::class, 'store'])->middleware('permission:ministries.create');
+    Route::get('/ministries/{id}', [MinistryController::class, 'show'])->middleware('permission:ministries.view');
+    Route::put('/ministries/{id}', [MinistryController::class, 'update'])->middleware('permission:ministries.update');
+    Route::delete('/ministries/{id}', [MinistryController::class, 'destroy'])->middleware('permission:ministries.delete');
+
+    Route::post('/ministries/{id}/members', [MinistryController::class, 'assignMembers'])->middleware('permission:ministries.update');
+    Route::delete('/ministries/{id}/members/{memberId}', [MinistryController::class, 'removeMember'])->middleware('permission:ministries.update');
+});
+
+/*
+|--------------------------------------------------------------------------
+| MODULE ASSISTANT IA & MESSAGERIE PASTORALE
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Assistant Spirituel IA
+    Route::get('/assistant/conversations', [AssistantController::class, 'index']);
+    Route::post('/assistant/conversations', [AssistantController::class, 'store']);
+    Route::get('/assistant/conversations/{id}', [AssistantController::class, 'show']);
+    Route::post('/assistant/conversations/{id}/messages', [AssistantController::class, 'sendMessage']);
+    Route::delete('/assistant/conversations/{id}', [AssistantController::class, 'destroy']);
+
+    // Messagerie Pastorale / Chat
+    Route::get('/chat/contacts', [ChatController::class, 'getContacts']);
+    Route::get('/chat/conversations/{userId}', [ChatController::class, 'getMessages']);
+    Route::post('/chat/messages', [ChatController::class, 'sendMessage']);
+    Route::post('/chat/duration', [ChatController::class, 'setDuration']);
+    Route::get('/chat/unread-count', [ChatController::class, 'getUnreadCount']);
 });
 
 

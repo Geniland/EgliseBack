@@ -19,7 +19,11 @@ class StoreAttendanceSessionRequest extends FormRequest
             'session_date' => 'required|date',
             'start_time' => 'required|date_format:H:i,H:i:s',
             'end_time' => 'required|date_format:H:i,H:i:s|after:start_time',
-            'type' => ['required', Rule::in(['Culte', 'Prière', 'Étude biblique', 'Réunion', 'Formation', 'Autre'])],
+            'type' => ['required', Rule::in([
+                'Culte dominical', 'Réunion de prière', 'Étude biblique', 
+                'Réunion des jeunes', 'Culte des enfants', 'Mariage', 
+                'Baptême', 'Conférence', 'Atelier de formation', 'Autre'
+            ])],
             'description' => 'nullable|string|max:1000',
             'location' => 'nullable|string|max:255',
             'latitude' => 'nullable|numeric|between:-90,90',

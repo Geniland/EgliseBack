@@ -24,7 +24,7 @@ class TransactionController extends Controller
 
     public function index(Request $request)
     {
-        $items = Transaction::with(['account', 'category', 'creator', 'fromAccount', 'toAccount'])
+        $items = Transaction::with(['account', 'category', 'creator', 'approver', 'fromAccount', 'toAccount'])
             ->withCount('attachments as attachments_count')
             ->when($request->search, function ($q) use ($request) {
                 $q->where(function ($s) use ($request) {
@@ -110,7 +110,7 @@ class TransactionController extends Controller
         $pendingQuery = Transaction::pending()->tap($scopeTeam);
         $pendingCount = (clone $pendingQuery)->count();
         $waitingApproval = (clone $pendingQuery)
-            ->with(['account', 'category', 'creator'])
+            ->with(['account', 'category', 'creator', 'approver'])
             ->latest('transaction_date')
             ->limit($isDashboard ? 10 : 50)
             ->get();
@@ -155,7 +155,7 @@ class TransactionController extends Controller
 
         $recent = collect();
         if ($isDashboard) {
-            $recentQ = Transaction::with(['account', 'category', 'creator'])
+            $recentQ = Transaction::with(['account', 'category', 'creator', 'approver'])
                 ->when($isBlocked, fn($q) => $q->whereRaw('0 = 1'))
                 ->when($teamIds !== null && !$isBlocked, fn($q) => $q->whereIn('created_by', $teamIds))
                 ->when($from, fn($q) => $q->whereDate('transaction_date', '>=', $from))
@@ -371,7 +371,7 @@ class TransactionController extends Controller
                 'approved_at' => now(),
                 'updated_by' => auth()->id(),
             ]);
-            $transaction->load(['approver', 'account', 'category']);
+            $transaction->load(['approver', 'account', 'category', 'creator']);
 
             return response()->json([
                 'message' => 'Transaction approuvée',
