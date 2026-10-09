@@ -172,7 +172,8 @@ class FormationController extends Controller
 
     public function show($id)
     {
-        $formation = Formation::with(['category', 'creator', 'modules.contents'])->findOrFail($id);
+        $formation = ScopeHelper::findOwnedOrFail(Formation::class, $id, 'church_id');
+        $formation->load(['category', 'creator', 'modules.contents']);
         return response()->json($this->formatFormation($formation, auth()->user(), true));
     }
 
@@ -473,6 +474,10 @@ class FormationController extends Controller
     {
         $access = $this->checkAccess($formation, $user);
         $data = $formation->toArray();
+        $data['creator'] = $formation->creator ? [
+            'id' => $formation->creator->id,
+            'name' => $formation->creator->name,
+        ] : null;
         $data['can_access'] = $access['can_access'];
         $data['is_admin_bypass'] = $access['is_admin_bypass'];
         $data['is_enrolled'] = $access['is_enrolled'];

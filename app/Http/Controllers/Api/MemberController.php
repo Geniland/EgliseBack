@@ -177,6 +177,51 @@ class MemberController extends Controller
          */
         $member = Member::create($data);
 
+        try {
+            $member->ensureQrToken();
+        } catch (\Throwable) { /* ignore QR errors on creation */ }
+
+        if ($member->user_id) {
+            try {
+                $qrDataUrl = $member->getQrCodeDataUrl(280);
+                $qrPayloadJson = $member->getQrCodeDataString();
+
+                $church = $member->church;
+                $senderId = $church?->created_by ?? null;
+                if (!$senderId) {
+                    $senderId = \App\Models\User::where('church_id', $member->church_id)
+                        ->whereIn('role_id', [1, 2, 5])
+                        ->orderBy('role_id', 'asc')
+                        ->value('id');
+                }
+                if (!$senderId) {
+                    $senderId = (int) auth()->id() ?: 1;
+                }
+
+                $churchName = $church?->name ?: config('app.name', 'Notre église');
+                $welcomeMessage = "👋 Bienvenue {$member->first_name} {$member->last_name} !\n\n"
+                    . "Votre compte membre a été ajouté dans l'église **{$churchName}**.\n\n"
+                    . "🎫 **Votre code membre :** {$member->member_code}\n\n"
+                    . "📱 **Votre QR Code personnel de présence est ci-joint.**\n"
+                    . "Présentez-le lors des cultes et réunions pour être marqué(e) présent(e) automatiquement.\n\n"
+                    . "Vous pouvez aussi le retrouver à tout moment dans votre profil ou dans la section \"Mon QR Code\".";
+
+                $fullMessage = $welcomeMessage
+                    . "\n\n---QR_CODE_DATA---\n"
+                    . $qrPayloadJson
+                    . "\n---QR_CODE_IMAGE---\n"
+                    . $qrDataUrl;
+
+                \App\Models\ChatMessage::create([
+                    'church_id' => $member->church_id,
+                    'sender_id' => $senderId,
+                    'recipient_id' => $member->user_id,
+                    'contenu' => $fullMessage,
+                    'lu' => false,
+                ]);
+            } catch (\Throwable) { /* ignore chat / QR errors, the member is still created */ }
+        }
+
         /**
          * Association des ministères
          */
@@ -361,5 +406,48 @@ class MemberController extends Controller
             'message' => 'Membre restauré',
             'member' => new MemberResource($member)
         ]);
+    }
+
+    public function getQrCode(Request $request, Member $member)
+    {
+        if (!ScopeHelper::canAccessMember($member)
+            && (auth()->check() && (int)($member->user_id ?? 0) !== (int)auth()->id())
+        ) {
+            return response()->json([
+                'message' => "Vous n'avez pas accès aux informations de ce membre."
+            ], 403);
+        }
+
+        $size = (int)($request->size ?? 280);
+        $size = max(120, min(800, $size));
+
+        $member->ensureQrToken();
+
+        return response()->json([
+            'member' => [
+                'id' => $member->id,
+                'first_name' => $member->first_name,
+                'last_name' => $member->last_name,
+                'member_code' => $member->member_code,
+                'qr_token' => $member->qr_token,
+            ],
+            'qr_payload' => $member->getQrPayload(),
+            'qr_data_string' => $member->getQrCodeDataString(),
+            'qr_data_url' => $member->getQrCodeDataUrl($size),
+            'size' => $size,
+        ]);
+    }
+
+    public function myQrCode(Request $request)
+    {
+        $user = auth()->user();
+        if (!$user) {
+            return response()->json(['message' => 'Non authentifié'], 401);
+        }
+        $member = $user->member;
+        if (!$member) {
+            return response()->json(['message' => 'Aucun profil membre rattaché à votre compte.'], 404);
+        }
+        return $this->getQrCode($request, $member);
     }
 }

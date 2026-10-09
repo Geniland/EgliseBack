@@ -10,14 +10,45 @@ use App\Models\Attendance;
 use App\Models\AttendanceSession;
 use App\Models\Member;
 use App\Support\ScopeHelper;
+use App\Services\AttendanceAutoAbsenceService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class AttendanceSessionController extends Controller
 {
-    public function index(Request $request)
+    protected function canUserActOnSession(AttendanceSession $session, string $action = 'view'): bool
     {
+        $u = auth()->user();
+        if (!$u) return false;
+        if (ScopeHelper::isSuperAdmin()) return true;
+
+        $isInScope = AttendanceSession::query()
+            ->whereKey($session->id)
+            ->tap(fn ($query) => ScopeHelper::applyOwnedByScope($query))
+            ->exists();
+        if (!$isInScope) return false;
+
+        $permMatch = match ($action) {
+            'update' => $u->hasPermission('attendance.update'),
+            'delete' => $u->hasPermission('attendance.delete'),
+            default => $u->hasPermission('attendance.view'),
+        };
+
+        return $permMatch;
+    }
+
+    protected function processExpiredSessions(AttendanceAutoAbsenceService $service, int $max = 5): void
+    {
+        try {
+            $service->processExpired($max);
+        } catch (\Throwable $e) { /* Ignorer silencieusement en requête Web */ }
+    }
+
+    public function index(Request $request, AttendanceAutoAbsenceService $autoAbsence)
+    {
+        $this->processExpiredSessions($autoAbsence, 3);
+
         $sessions = AttendanceSession::with(['creator'])
             ->when($request->search, function ($q) use ($request) {
                 $q->where('title', 'LIKE', "%{$request->search}%");
@@ -34,18 +65,36 @@ class AttendanceSessionController extends Controller
         return AttendanceSessionResource::collection($sessions);
     }
 
-    public function show(AttendanceSession $attendanceSession)
+    public function show(Request $request, AttendanceSession $attendanceSession, AttendanceAutoAbsenceService $autoAbsence)
     {
-        $attendanceSession->load(['creator', 'updater', 'attendances.member']);
+        abort_unless($this->canUserActOnSession($attendanceSession), 404);
+        $this->processExpiredSessions($autoAbsence, 3);
+        $attendanceSession->load([
+            'creator',
+            'updater',
+            'attendances' => function ($query) {
+                $query->whereHas('member', fn ($members) => ScopeHelper::applyMemberScope($members));
+            },
+            'attendances.member',
+        ]);
         return new AttendanceSessionResource($attendanceSession);
     }
 
     public function store(StoreAttendanceSessionRequest $request)
     {
         $data = $request->validated();
-        $data['created_by'] = auth()->id();
-        $data['updated_by'] = auth()->id();
+        $u = $request->user();
+        $data['created_by'] = $u->id;
+        $data['updated_by'] = $u->id;
         $data['status'] = $data['status'] ?? true;
+        if (empty($data['church_id']) && !empty($u->church_id)) {
+            $data['church_id'] = $u->church_id;
+        }
+        if (!empty($data['church_id']) && !ScopeHelper::isSuperAdmin()) {
+            $allowedChurchIds = ScopeHelper::getMyChurchIds();
+            if ($u->church_id) $allowedChurchIds[] = (int) $u->church_id;
+            abort_unless(in_array((int) $data['church_id'], array_map('intval', $allowedChurchIds), true), 403);
+        }
 
         $session = AttendanceSession::create($data);
         $session->load(['creator']);
@@ -58,6 +107,11 @@ class AttendanceSessionController extends Controller
 
     public function update(UpdateAttendanceSessionRequest $request, AttendanceSession $attendanceSession)
     {
+        abort_unless($this->canUserActOnSession($attendanceSession, 'update'), 404);
+        if (!$this->canUserActOnSession($attendanceSession, 'update')) {
+            return response()->json(['message' => 'Vous n\'avez pas la permission nécessaire pour modifier cette session'], 403);
+        }
+
         $data = $request->validated();
         $data['updated_by'] = auth()->id();
         $attendanceSession->update($data);
@@ -71,6 +125,10 @@ class AttendanceSessionController extends Controller
 
     public function destroy(AttendanceSession $attendanceSession)
     {
+        abort_unless($this->canUserActOnSession($attendanceSession, 'delete'), 404);
+        if (!$this->canUserActOnSession($attendanceSession, 'delete')) {
+            return response()->json(['message' => 'Vous n\'avez pas la permission nécessaire pour supprimer cette session'], 403);
+        }
         $attendanceSession->delete();
         return response()->json(['message' => 'Session supprimée']);
     }
@@ -85,6 +143,9 @@ class AttendanceSessionController extends Controller
         $attBase = Attendance::query()
             ->whereHas('session', function ($q) {
                 ScopeHelper::applyOwnedByScope($q);
+            })
+            ->whereHas('member', function ($q) {
+                ScopeHelper::applyMemberScope($q);
             });
 
         $present = (clone $attBase)->present()->count();
@@ -113,12 +174,12 @@ class AttendanceSessionController extends Controller
             ];
         }
 
-        $repeated = DB::table('attendances')
+        $repeated = (clone $attBase)
             ->select('member_id', DB::raw('COUNT(*) as cnt'))
             ->whereIn('status', ['absent', 'absent_excuse'])
             ->where('created_at', '>=', now()->subDays(30))
             ->groupBy('member_id')
-            ->having('cnt', '>=', 3)
+            ->havingRaw('COUNT(*) >= ?', [3])
             ->orderByDesc('cnt')
             ->limit(10)
             ->get()
@@ -148,6 +209,7 @@ class AttendanceSessionController extends Controller
 
     public function generateQr(Request $request, AttendanceSession $attendanceSession)
     {
+        $attendanceSession = ScopeHelper::findOwnedOrFail(AttendanceSession::class, $attendanceSession->id);
         $validity = (int) ($request->validity_minutes ?? 180);
         $validity = max(5, min(4320, $validity));
 
@@ -175,14 +237,28 @@ class AttendanceSessionController extends Controller
         ]);
     }
 
-    public function invalidateQr(AttendanceSession $attendanceSession)
+    public function invalidateQr(Request $request, AttendanceSession $attendanceSession, AttendanceAutoAbsenceService $autoAbsence)
     {
+        abort_unless($this->canUserActOnSession($attendanceSession, 'update'), 404);
         $attendanceSession->invalidateQr();
-        return response()->json(['message' => 'QR Code invalide']);
+
+        $processAbsences = (bool) $request->input('process_absences', false);
+        $report = null;
+        if ($processAbsences || $attendanceSession->auto_absences_processed === false) {
+            try {
+                $report = $autoAbsence->processSession($attendanceSession->fresh());
+            } catch (\Throwable $e) { /* Ignorer */ }
+        }
+
+        return response()->json([
+            'message' => 'QR Code invalide' . ($report ? ' et absences traitées, messages pastoraux envoyés.' : '.'),
+            'report' => $report,
+        ]);
     }
 
     public function markAllAbsent(Request $request, AttendanceSession $attendanceSession)
     {
+        $attendanceSession = ScopeHelper::findOwnedOrFail(AttendanceSession::class, $attendanceSession->id);
         $override = (bool) $request->input('override', false);
         $createdBy = auth()->id();
 

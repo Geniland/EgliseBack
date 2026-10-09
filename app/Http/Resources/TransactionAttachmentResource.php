@@ -27,7 +27,6 @@ class TransactionAttachmentResource extends JsonResource
                 return $this->uploadedBy ? [
                     'id' => $this->uploadedBy->id,
                     'name' => $this->uploadedBy->name,
-                    'email' => $this->uploadedBy->email,
                 ] : null;
             }),
             'created_at' => $this->created_at?->toDateTimeString(),

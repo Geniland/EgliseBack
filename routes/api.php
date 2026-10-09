@@ -24,6 +24,8 @@ use App\Http\Controllers\Api\LiveStreamController;
 use App\Http\Controllers\Api\MinistryController;
 use App\Http\Controllers\Api\AssistantController;
 use App\Http\Controllers\Api\ChatController;
+use App\Http\Controllers\Api\AccountSecurityController;
+use App\Http\Controllers\Api\GlobalSearchController;
 
 
 // Route::get('/user', function (Request $request) {
@@ -37,19 +39,27 @@ Route::post('/register',[AuthController::class,'register']);
 Route::post('/login',[AuthController::class,'login']);
 
 Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/search', GlobalSearchController::class);
+    Route::get('/me/security/sessions', [AccountSecurityController::class, 'sessions']);
+    Route::patch('/me/security/password', [AccountSecurityController::class, 'updatePassword']);
+    Route::delete('/me/security/sessions/others', [AccountSecurityController::class, 'revokeOtherSessions']);
 });
 
 // Dashboard
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard/stats', [DashboardController::class, 'stats']);
-    Route::get('/dashboard/ministry-distribution', [DashboardController::class, 'ministryDistribution']);
     Route::get('/dashboard/presence-donation-chart', [DashboardController::class, 'presenceDonationChart']);
-    Route::get('/dashboard/financial-summary', [DashboardController::class, 'financialSummary']);
-    Route::get('/dashboard/upcoming-events', [DashboardController::class, 'upcomingEvents']);
     Route::get('/dashboard/recent-activities', [DashboardController::class, 'recentActivities']);
     Route::get('/dashboard/devices-status', [DashboardController::class, 'devicesStatus']);
 });
+Route::middleware(['auth:sanctum', 'permission:ministries.view'])
+    ->get('/dashboard/ministry-distribution', [DashboardController::class, 'ministryDistribution']);
+Route::middleware(['auth:sanctum', 'permission:finance.view'])
+    ->get('/dashboard/financial-summary', [DashboardController::class, 'financialSummary']);
+Route::middleware(['auth:sanctum', 'permission:events.view'])
+    ->get('/dashboard/upcoming-events', [DashboardController::class, 'upcomingEvents']);
 
 // Super Admin - Gestion des administrateurs d'églises
 Route::middleware(['auth:sanctum', 'super_admin'])->group(function () {
@@ -135,6 +145,11 @@ Route::middleware([
     'permission:members.view'
 ])->get('/members/{member}', [MemberController::class, 'show']);
 
+Route::middleware(['auth:sanctum'])->group(function () {
+    Route::get('/me/qr-code', [MemberController::class, 'myQrCode']);
+    Route::get('/members/{member}/qr-code', [MemberController::class, 'getQrCode'])->middleware('permission:members.view');
+});
+
 Route::middleware([
     'auth:sanctum',
     'permission:members.update'
@@ -153,19 +168,19 @@ Route::middleware([
 
 // Référentiels (accessibles à tous les utilisateurs connectés)
 Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/referentiels/ministries', function () {
+    Route::middleware('permission:ministries.view')->get('/referentiels/ministries', function () {
         $q = App\Models\Ministry::where('status', true);
         App\Support\ScopeHelper::applyOwnedByScope($q);
         return response()->json($q->orderBy('name')->get(['id', 'name', 'description']));
     });
 
-    Route::get('/referentiels/families', function () {
+    Route::middleware('permission:members.view')->get('/referentiels/families', function () {
         $q = App\Models\Family::where('status', true);
         App\Support\ScopeHelper::applyOwnedByScope($q);
         return response()->json($q->orderBy('family_name')->get(['id', 'family_code', 'family_name', 'phone', 'address']));
     });
 
-    Route::post('/referentiels/families', function (Illuminate\Http\Request $request) {
+    Route::middleware('permission:members.create')->post('/referentiels/families', function (Illuminate\Http\Request $request) {
         $validated = $request->validate([
             'family_name' => 'required|string|max:150',
             'phone' => 'nullable|string|max:30',
@@ -199,7 +214,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
 // === MODULE PRÉSENCES - QR Scan public (sans authentification) ===
-Route::post('/attendance/scan-public', [AttendanceController::class, 'scan']);
+Route::middleware(['auth:sanctum', 'permission:attendance.scan'])
+    ->post('/attendance/scan-public', [AttendanceController::class, 'scan']);
 
 // === MODULE PRÉSENCES - Sessions de présence ===
 Route::middleware([
@@ -265,6 +281,11 @@ Route::middleware([
     'auth:sanctum',
     'permission:attendance.scan'
 ])->post('/attendance/scan', [AttendanceController::class, 'scan']);
+
+Route::middleware([
+    'auth:sanctum',
+    'permission:attendance.scan'
+])->post('/attendance/scan-member', [AttendanceController::class, 'scanMember']);
 
 // === MODULE PRÉSENCES - Motifs d'absence ===
 Route::middleware([
@@ -371,7 +392,7 @@ Route::middleware(['auth:sanctum', 'permission:finance.attachments'])->group(fun
 
 Route::middleware(['auth:sanctum'])->group(function () {
 
-    Route::get('/referentiels/financial-categories', function () {
+    Route::middleware('permission:finance.view')->get('/referentiels/financial-categories', function () {
         $mapCat = fn($c) => [
             'id' => $c->id,
             'name' => $c->name,
@@ -412,7 +433,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         ]);
     });
 
-    Route::get('/referentiels/financial-accounts', function () {
+    Route::middleware('permission:finance.view')->get('/referentiels/financial-accounts', function () {
         $q = \App\Models\FinancialAccount::active();
         \App\Support\ScopeHelper::applyOwnedByScope($q);
         $accounts = $q->orderBy('name')->get(['id', 'name', 'type', 'currency', 'initial_balance']);
@@ -498,7 +519,7 @@ Route::middleware('auth:sanctum')->get('/referentiels/event-types', function () 
 */
 
 Route::middleware(['auth:sanctum'])->group(function () {
-    Route::get('/live-streams/active', [LiveStreamController::class, 'active']);
+    Route::get('/live-streams/active', [LiveStreamController::class, 'active'])->middleware('permission:live_streams.view');
     
     Route::get('/live-streams', [LiveStreamController::class, 'index'])->middleware('permission:live_streams.view');
     Route::post('/live-streams', [LiveStreamController::class, 'store'])->middleware('permission:live_streams.create');
@@ -507,7 +528,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('/live-streams/{liveStream}', [LiveStreamController::class, 'destroy'])->middleware('permission:live_streams.delete');
 
     Route::post('/live-streams/{liveStream}/start', [LiveStreamController::class, 'start'])->middleware('permission:live_streams.publish');
-    Route::get('/live-streams/{liveStream}/status', [LiveStreamController::class, 'status']);
+    Route::get('/live-streams/{liveStream}/status', [LiveStreamController::class, 'status'])->middleware('permission:live_streams.view');
     Route::post('/live-streams/{liveStream}/end', [LiveStreamController::class, 'end'])->middleware('permission:live_streams.end');
     Route::post('/live-streams/{liveStream}/publish-resource', [LiveStreamController::class, 'publishAsResource'])->middleware('permission:live_streams.publish');
 });
@@ -520,7 +541,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
 Route::middleware(['auth:sanctum'])->group(function () {
     // Catégories
-    Route::get('/resource-categories', [ResourceCategoryController::class, 'index']);
+    Route::get('/resource-categories', [ResourceCategoryController::class, 'index'])->middleware('permission:resources.view|formations.view');
     Route::post('/resource-categories', [ResourceCategoryController::class, 'store'])->middleware('permission:resources.create|formations.create');
     Route::put('/resource-categories/{category}', [ResourceCategoryController::class, 'update'])->middleware('permission:resources.update|formations.update');
     Route::delete('/resource-categories/{category}', [ResourceCategoryController::class, 'destroy'])->middleware('permission:resources.delete|formations.delete');

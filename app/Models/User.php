@@ -46,6 +46,39 @@ class User extends Authenticatable
         return $this->belongsTo(Role::class);
     }
 
+    /**
+     * Vérifie si l'utilisateur possède une permission (via son rôle).
+     * Accepte un string ou un array (ET logique) / pipe (OU logique).
+     */
+    public function hasPermission(string|array $permission): bool
+    {
+        if ($this->role_id === 1) return true;
+        if (\App\Support\ScopeHelper::isSuperAdmin()) return true;
+        if (!$this->relationLoaded('role') || !$this->role) $this->load('role');
+        if (!$this->role) return false;
+
+        if (is_array($permission)) {
+            $names = array_values($permission);
+        } else {
+            $names = explode('|', $permission);
+        }
+
+        if ($this->role->relationLoaded('permissions')) {
+            $collected = $this->role->getRelation('permissions');
+            if ($collected instanceof \Illuminate\Support\Collection) {
+                $count = $collected->whereIn('name', $names)->count();
+                if (is_array($permission)) {
+                    return $count >= count($names);
+                }
+                return $count > 0;
+            }
+        }
+
+        return (bool)$this->role
+            ->permissions()
+            ->whereIn('name', $names)
+            ->exists();
+    }
 
     /**
      * Relation avec Fonction

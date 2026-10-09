@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Support\ScopeHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
@@ -12,6 +13,37 @@ use Illuminate\Validation\ValidationException;
 
 class UserController extends Controller
 {
+    private function visibleUsersQuery(): \Illuminate\Database\Eloquent\Builder
+    {
+        $query = User::query();
+        if (ScopeHelper::isSuperAdmin()) {
+            return $query;
+        }
+
+        $teamIds = ScopeHelper::getTeamUserIds();
+        $churchIds = ScopeHelper::getMyChurchIds();
+        $userChurchId = (int) (auth()->user()?->church_id ?? 0);
+        if ($userChurchId > 0) {
+            $churchIds[] = $userChurchId;
+        }
+        $teamIds = array_values(array_unique(array_filter(array_map('intval', $teamIds))));
+        $churchIds = array_values(array_unique(array_filter(array_map('intval', $churchIds))));
+
+        if (!$teamIds && !$churchIds) {
+            return $query->whereRaw('0 = 1');
+        }
+
+        return $query->where('role_id', '!=', 1)->where(function ($scope) use ($teamIds, $churchIds) {
+            if ($teamIds) {
+                $scope->whereIn('id', $teamIds);
+            }
+            if ($churchIds) {
+                $teamIds
+                    ? $scope->orWhereIn('church_id', $churchIds)
+                    : $scope->whereIn('church_id', $churchIds);
+            }
+        });
+    }
 
 
     /**
@@ -21,12 +53,10 @@ class UserController extends Controller
     {
 
         return response()->json(
-
-            User::with([
+            $this->visibleUsersQuery()->with([
                 'role',
                 'fonction'
             ])->get()
-
         );
 
     }
@@ -38,6 +68,7 @@ class UserController extends Controller
      */
     public function show(User $user)
     {
+        abort_unless($this->visibleUsersQuery()->whereKey($user->id)->exists(), 404);
 
         return response()->json(
 
@@ -90,6 +121,8 @@ class UserController extends Controller
                 'role_id' => $validated['role_id'],
                 'fonction_id' => $validated['fonction_id'],
                 'status' => $validated['status'] ?? true,
+                'church_id' => $currentUser->church_id,
+                'parent_user_id' => $currentUser->id,
             ]);
 
             // Charger les relations
@@ -121,7 +154,7 @@ class UserController extends Controller
     public function update(Request $request, User $user)
     {
 
-        $request->validate([
+        $validated = $request->validate([
 
             'name'=>'sometimes|required',
 
@@ -131,9 +164,12 @@ class UserController extends Controller
 
             'fonction_id'=>'sometimes|exists:fonctions,id',
 
+            'status'=>'sometimes|boolean',
+
         ]);
 
         $currentUser = $request->user();
+        abort_unless($this->visibleUsersQuery()->whereKey($user->id)->exists(), 404);
 
         // Vérification hiérarchique: peut-on modifier cet utilisateur?
         if (!$currentUser->canActOnUser($user)) {
@@ -159,7 +195,7 @@ class UserController extends Controller
             }
         }
 
-        $user->update($request->all());
+        $user->update($validated);
 
         $user->load(['role', 'fonction']);
 
@@ -196,6 +232,7 @@ class UserController extends Controller
     public function destroy(User $user)
     {
         $currentUser = request()->user();
+        abort_unless($this->visibleUsersQuery()->whereKey($user->id)->exists(), 404);
 
         // Vérification hiérarchique: peut-on supprimer cet utilisateur?
         if (!$currentUser->canActOnUser($user)) {

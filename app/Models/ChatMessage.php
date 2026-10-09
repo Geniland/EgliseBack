@@ -13,6 +13,7 @@ class ChatMessage extends Model
         'church_id',
         'sender_id',
         'recipient_id',
+        'automation_key',
         'contenu',
         'lu',
         'expires_at',

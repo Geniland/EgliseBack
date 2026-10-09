@@ -40,6 +40,7 @@ class EventController extends Controller
 
     public function show(Event $event)
     {
+        $event = ScopeHelper::findOwnedOrFail(Event::class, $event->id);
         $event->load(['creator', 'updater']);
         return new EventResource($event);
     }
@@ -62,6 +63,7 @@ class EventController extends Controller
 
     public function update(UpdateEventRequest $request, Event $event)
     {
+        $event = ScopeHelper::findOwnedOrFail(Event::class, $event->id);
         $data = $request->validated();
         $data['updated_by'] = auth()->id();
         $event->update($data);
@@ -75,12 +77,14 @@ class EventController extends Controller
 
     public function destroy(Event $event)
     {
+        $event = ScopeHelper::findOwnedOrFail(Event::class, $event->id);
         $event->delete();
         return response()->json(['message' => 'Événement supprimé']);
     }
 
     public function publish(Event $event)
     {
+        $event = ScopeHelper::findOwnedOrFail(Event::class, $event->id);
         $event->update([
             'status' => 'published',
             'updated_by' => auth()->id(),
@@ -95,6 +99,7 @@ class EventController extends Controller
 
     public function cancel(Event $event)
     {
+        $event = ScopeHelper::findOwnedOrFail(Event::class, $event->id);
         $event->update([
             'status' => 'cancelled',
             'updated_by' => auth()->id(),
@@ -109,6 +114,7 @@ class EventController extends Controller
 
     public function complete(Event $event)
     {
+        $event = ScopeHelper::findOwnedOrFail(Event::class, $event->id);
         $event->update([
             'status' => 'completed',
             'updated_by' => auth()->id(),
@@ -123,6 +129,7 @@ class EventController extends Controller
 
     public function toggleFeatured(Event $event)
     {
+        $event = ScopeHelper::findOwnedOrFail(Event::class, $event->id);
         $event->update([
             'is_featured' => !$event->is_featured,
             'updated_by' => auth()->id(),

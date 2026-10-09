@@ -13,6 +13,7 @@ class AttendanceSession extends Model
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
+        'church_id',
         'title',
         'session_date',
         'start_time',
@@ -27,6 +28,8 @@ class AttendanceSession extends Model
         'status',
         'qr_token',
         'qr_expires_at',
+        'auto_absences_processed',
+        'auto_absences_at',
         'created_by',
         'updated_by',
     ];
@@ -38,10 +41,17 @@ class AttendanceSession extends Model
         'gps_required' => 'boolean',
         'status' => 'boolean',
         'qr_expires_at' => 'datetime',
+        'auto_absences_processed' => 'boolean',
+        'auto_absences_at' => 'datetime',
         'latitude' => 'decimal:7',
         'longitude' => 'decimal:7',
         'gps_radius_meters' => 'integer',
     ];
+
+    public function church()
+    {
+        return $this->belongsTo(Church::class, 'church_id');
+    }
 
     public function attendances()
     {
@@ -98,22 +108,42 @@ class AttendanceSession extends Model
         $this->save();
     }
 
-    public function isWithinGps(?float $lat, ?float $lng): bool
+    /**
+     * Calcule la distance en mètres entre la session et des coordonnées GPS.
+     */
+    public function calculateDistanceMeters(?float $lat, ?float $lng): ?float
+    {
+        if ($lat === null || $lng === null || $this->latitude === null || $this->longitude === null) {
+            return null;
+        }
+        $earthRadius = 6371000;
+        $sessionLat = (float) $this->latitude;
+        $sessionLng = (float) $this->longitude;
+        $dLat = deg2rad($lat - $sessionLat);
+        $dLng = deg2rad($lng - $sessionLng);
+        $a = sin($dLat / 2) ** 2
+            + cos(deg2rad($sessionLat)) * cos(deg2rad($lat))
+            * sin($dLng / 2) ** 2;
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+        return (float) ($earthRadius * $c);
+    }
+
+    /**
+     * Vérifie si les coordonnées données sont dans le périmètre autorisé.
+     */
+    public function isWithinGps(?float $lat, ?float $lng, ?float $accuracy = null): bool
     {
         if (!$this->gps_required) {
             return true;
         }
-        if ($lat === null || $lng === null || $this->latitude === null || $this->longitude === null) {
-            return !$this->gps_required;
+        $distance = $this->calculateDistanceMeters($lat, $lng);
+        if ($distance === null) {
+            return false;
         }
-        $earthRadius = 6371000;
-        $dLat = deg2rad($lat - $this->latitude);
-        $dLng = deg2rad($lng - $this->longitude);
-        $a = sin($dLat / 2) ** 2
-            + cos(deg2rad($this->latitude)) * cos(deg2rad($lat))
-            * sin($dLng / 2) ** 2;
-        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
-        $distanceMeters = $earthRadius * $c;
-        return $distanceMeters <= (int) $this->gps_radius_meters;
+        // Tolérance d'imprécision mobile (plafonnée à 100m)
+        $accuracyBonus = ($accuracy !== null && $accuracy > 0) ? min((float) $accuracy, 100.0) : 0.0;
+        $effectiveRadius = max((int) $this->gps_radius_meters, 150) + $accuracyBonus;
+
+        return $distance <= $effectiveRadius;
     }
 }

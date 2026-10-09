@@ -8,6 +8,7 @@ return [
 
     'allowed_origins' => [
         env('FRONTEND_URL', 'http://localhost:5173'),
+        env('MOBILE_FRONTEND_URL', 'http://192.168.1.69:5173'),
         'http://localhost:5173',
         'http://127.0.0.1:5173',
         'http://localhost:5174',

@@ -39,14 +39,12 @@ class EventResource extends JsonResource
                 return $this->creator ? [
                     'id' => $this->creator->id,
                     'name' => $this->creator->name,
-                    'email' => $this->creator->email,
                 ] : null;
             }),
             'updater' => $this->whenLoaded('updater', function () {
                 return $this->updater ? [
                     'id' => $this->updater->id,
                     'name' => $this->updater->name,
-                    'email' => $this->updater->email,
                 ] : null;
             }),
             'created_at' => $this->created_at?->toDateTimeString(),

@@ -12,6 +12,15 @@ use Illuminate\Support\Facades\Auth;
 
 class ChatController extends Controller
 {
+    private function canAccessContact(int $contactId): bool
+    {
+        $contacts = $this->getContacts(request())->getData(true);
+
+        return collect($contacts)->contains(
+            fn ($contact) => (int) ($contact['id'] ?? 0) === $contactId
+        );
+    }
+
     /**
      * Liste des contacts disponibles pour la messagerie.
      * Cloisonné selon le rôle et l'église de l'utilisateur.
@@ -125,6 +134,7 @@ class ChatController extends Controller
     public function getMessages($otherUserId)
     {
         $userId = Auth::id();
+        abort_unless($this->canAccessContact((int) $otherUserId), 404);
         $otherUser = User::with(['role', 'church'])->findOrFail($otherUserId);
 
         // 1. Purge des messages expirés entre ces deux utilisateurs
@@ -200,6 +210,7 @@ class ChatController extends Controller
 
         $user = Auth::user();
         $recipientId = (int) $request->recipient_id;
+        abort_unless($this->canAccessContact($recipientId), 404);
 
         // Déterminer si une durée éphémère est activée
         $setting = ChatSetting::getSettingBetween($user->id, $recipientId);
@@ -247,6 +258,7 @@ class ChatController extends Controller
 
         $userId = Auth::id();
         $contactId = (int) $request->contact_id;
+        abort_unless($this->canAccessContact($contactId), 404);
         $duree = $request->duree ?: null;
 
         $setting = ChatSetting::setDurationBetween($userId, $contactId, $duree);

@@ -16,7 +16,10 @@ class EnrollmentController extends Controller
     public function myFormations(Request $request)
     {
         $enrollments = Enrollment::where('user_id', auth()->id())
-            ->with(['formation.category', 'formation.creator'])
+            ->with([
+                'formation.category',
+                'formation.creator:id,name',
+            ])
             ->orderByDesc('enrolled_at')
             ->get();
             
@@ -32,7 +35,9 @@ class EnrollmentController extends Controller
             'formation_id' => 'required|exists:formations,id'
         ]);
 
-        $formation = Formation::findOrFail($request->formation_id);
+        $formations = Formation::query();
+        \App\Support\ScopeHelper::applyChurchScope($formations);
+        $formation = $formations->findOrFail($request->formation_id);
 
         // Vérifier si déjà inscrit
         $exists = Enrollment::where('user_id', auth()->id())

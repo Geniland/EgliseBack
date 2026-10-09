@@ -85,7 +85,28 @@ class PermissionSeeder extends Seeder
 
             [
                 'name' => 'attendance.create',
-                'description' => 'Enregistrer une présence',
+                'description' => 'Enregistrer une présence ou créer une session',
+                'module' => 'attendance',
+                'status' => true,
+            ],
+
+            [
+                'name' => 'attendance.update',
+                'description' => 'Modifier une présence ou une session',
+                'module' => 'attendance',
+                'status' => true,
+            ],
+
+            [
+                'name' => 'attendance.delete',
+                'description' => 'Supprimer une présence ou une session',
+                'module' => 'attendance',
+                'status' => true,
+            ],
+
+            [
+                'name' => 'attendance.scan',
+                'description' => 'Scanner un QR code de présence',
                 'module' => 'attendance',
                 'status' => true,
             ],

@@ -4,18 +4,29 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use App\Support\ScopeHelper;
 
 class AttendanceSessionResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $presentCount = $this->whenCounted('attendances')
-            ? ($this->attendances_count ?? 0)
-            : $this->attendances()->count();
-
-        $present = $this->attendances()->present()->count();
-        $absent = $this->attendances()->absent()->count();
-        $late = $this->attendances()->late()->count();
+        $attendanceRows = $this->relationLoaded('attendances')
+            ? $this->getRelation('attendances')
+            : null;
+        $scopedAttendances = $this->attendances()->whereHas('member', fn ($query) => ScopeHelper::applyMemberScope($query));
+        $presentCount = $attendanceRows
+            ? $attendanceRows->count()
+            : $scopedAttendances->count();
+        $present = $attendanceRows
+            ? $attendanceRows->where('status', 'present')->count()
+            : (clone $scopedAttendances)->present()->count();
+        $absent = $attendanceRows
+            ? $attendanceRows->whereIn('status', ['absent', 'absent_excuse'])->count()
+            : (clone $scopedAttendances)->absent()->count();
+        $late = $attendanceRows
+            ? $attendanceRows->where('status', 'retard')->count()
+            : (clone $scopedAttendances)->late()->count();
+        $canManageQr = $request->user()?->hasPermission('attendance.create|attendance.scan|attendance.update') ?? false;
         $totalExpected = $present + $absent + $late;
         $rate = $totalExpected > 0 ? round(($present / $totalExpected) * 100, 1) : 0;
 
@@ -34,9 +45,9 @@ class AttendanceSessionResource extends JsonResource
             'gps_radius_meters' => $this->gps_radius_meters,
             'gps_required' => (bool) $this->gps_required,
             'status' => (bool) $this->status,
-            'qr_token' => $this->qr_token,
-            'qr_expires_at' => $this->qr_expires_at?->format('d/m/Y H:i'),
-            'qr_valid' => $this->isQrValid(),
+            'qr_token' => $this->when($canManageQr, $this->qr_token),
+            'qr_expires_at' => $this->when($canManageQr, $this->qr_expires_at?->format('d/m/Y H:i')),
+            'qr_valid' => $this->when($canManageQr, $this->isQrValid()),
             'stats' => [
                 'total' => $totalExpected,
                 'present' => $present,
@@ -45,8 +56,14 @@ class AttendanceSessionResource extends JsonResource
                 'attendance_rate' => $rate,
             ],
             'attendances_count' => $presentCount,
-            'created_by' => $this->whenLoaded('creator'),
-            'updated_by' => $this->whenLoaded('updater'),
+            'created_by' => $this->whenLoaded('creator', fn () => $this->creator ? [
+                'id' => $this->creator->id,
+                'name' => $this->creator->name,
+            ] : null),
+            'updated_by' => $this->whenLoaded('updater', fn () => $this->updater ? [
+                'id' => $this->updater->id,
+                'name' => $this->updater->name,
+            ] : null),
             'attendances' => AttendanceResource::collection($this->whenLoaded('attendances')),
             'created_at' => $this->created_at?->format('d/m/Y H:i'),
             'updated_at' => $this->updated_at?->format('d/m/Y H:i'),

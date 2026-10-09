@@ -10,27 +10,48 @@ use Illuminate\Http\Request;
 
 class MinistryController extends Controller
 {
+    private function visibleMinistry(int $id): Ministry
+    {
+        return ScopeHelper::findOwnedOrFail(Ministry::class, $id, 'church_id');
+    }
+
+    private function assertMembersInScope(array $memberIds): void
+    {
+        foreach (Member::whereKey($memberIds)->get() as $member) {
+            abort_unless(ScopeHelper::canAccessMember($member), 403, 'Un des membres sélectionnés est hors de votre périmètre.');
+        }
+    }
+
     /**
      * Liste des ministères / services avec scoping église.
      */
     public function index(Request $request)
     {
-        $query = Ministry::with(['leader:id,first_name,last_name,photo,phone'])
+        $leaderColumns = $request->user()->hasPermission('members.view')
+            ? 'id,first_name,last_name,photo,phone'
+            : 'id,first_name,last_name,photo';
+        $query = Ministry::with(['leader' => fn ($q) => $q->select(explode(',', $leaderColumns))])
             ->withCount('members');
 
         if (!ScopeHelper::isSuperAdmin()) {
             $myChurchIds = ScopeHelper::getMyChurchIds();
             $teamUserIds = ScopeHelper::getTeamUserIds();
+            $hasChurchScope = !empty($myChurchIds) && !(count($myChurchIds) === 1 && (int) $myChurchIds[0] === 0);
+            $hasTeamScope = !empty($teamUserIds) && !(count($teamUserIds) === 1 && (int) $teamUserIds[0] === 0);
 
-            $query->where(function ($q) use ($myChurchIds, $teamUserIds) {
-                if (!empty($myChurchIds) && !(count($myChurchIds) === 1 && (int)$myChurchIds[0] === 0)) {
+            if (!$hasChurchScope && !$hasTeamScope) {
+                $query->whereRaw('0 = 1');
+            } else {
+                $query->where(function ($q) use ($myChurchIds, $teamUserIds, $hasChurchScope, $hasTeamScope) {
+                    if ($hasChurchScope) {
                     $q->whereIn('church_id', $myChurchIds)
                       ->orWhereNull('church_id');
-                }
-                if (!empty($teamUserIds) && !(count($teamUserIds) === 1 && (int)$teamUserIds[0] === 0)) {
-                    $q->orWhereIn('created_by', $teamUserIds);
-                }
-            });
+                    }
+                    if ($hasTeamScope) {
+                        $q->orWhereIn('created_by', $teamUserIds);
+                    }
+                });
+            }
         }
 
         if ($request->filled('search')) {
@@ -65,7 +86,16 @@ class MinistryController extends Controller
             'leader_id' => 'nullable|exists:members,id',
             'meeting_schedule' => 'nullable|string|max:255',
             'status' => 'boolean',
+            'member_ids' => 'sometimes|array',
+            'member_ids.*' => 'integer|exists:members,id',
         ]);
+
+        if (!empty($validated['leader_id'])) {
+            abort_unless(ScopeHelper::canAccessMember(Member::findOrFail($validated['leader_id'])), 403);
+        }
+        if (!empty($validated['member_ids'])) {
+            $this->assertMembersInScope($validated['member_ids']);
+        }
 
         $churchId = ScopeHelper::getRequestedChurchContext()
             ?: auth()->user()->church_id
@@ -77,14 +107,15 @@ class MinistryController extends Controller
         $ministry->created_by = auth()->id();
         $ministry->save();
 
-        if ($request->filled('member_ids') && is_array($request->member_ids)) {
-            $ministry->members()->sync($request->member_ids);
+        if (!empty($validated['member_ids'])) {
+            $ministry->members()->sync($validated['member_ids']);
         }
 
-        return response()->json(
-            $ministry->load(['leader:id,first_name,last_name,photo,phone'])->loadCount('members'),
-            201
-        );
+        $leaderColumns = auth()->user()->hasPermission('members.view')
+            ? 'id,first_name,last_name,photo,phone'
+            : 'id,first_name,last_name,photo';
+        $ministry->load(['leader' => fn ($q) => $q->select(explode(',', $leaderColumns))])->loadCount('members');
+        return response()->json($ministry, 201);
     }
 
     /**
@@ -92,12 +123,18 @@ class MinistryController extends Controller
      */
     public function show($id)
     {
-        $ministry = Ministry::with([
-            'leader:id,first_name,last_name,photo,phone',
-            'members:id,first_name,last_name,photo,phone,email,status'
-        ])
-        ->withCount('members')
-        ->findOrFail($id);
+        $ministry = $this->visibleMinistry((int) $id);
+        $leaderColumns = auth()->user()->hasPermission('members.view')
+            ? ['id', 'first_name', 'last_name', 'photo', 'phone']
+            : ['id', 'first_name', 'last_name', 'photo'];
+        $ministry->load(['leader' => fn ($q) => $q->select($leaderColumns)]);
+        if (auth()->user()->hasPermission('members.view')) {
+            $ministry->load(['members' => function ($query) {
+                ScopeHelper::applyMemberScope($query);
+                $query->select(['members.id', 'first_name', 'last_name', 'photo', 'phone', 'email', 'status']);
+            }]);
+        }
+        $ministry->loadCount('members');
 
         return response()->json($ministry);
     }
@@ -107,7 +144,7 @@ class MinistryController extends Controller
      */
     public function update(Request $request, $id)
     {
-        $ministry = Ministry::findOrFail($id);
+        $ministry = $this->visibleMinistry((int) $id);
 
         $validated = $request->validate([
             'name' => 'required|string|max:150',
@@ -115,18 +152,26 @@ class MinistryController extends Controller
             'leader_id' => 'nullable|exists:members,id',
             'meeting_schedule' => 'nullable|string|max:255',
             'status' => 'boolean',
+            'member_ids' => 'sometimes|array',
+            'member_ids.*' => 'integer|exists:members,id',
         ]);
 
         $validated['updated_by'] = auth()->id();
+        if (!empty($validated['leader_id'])) {
+            abort_unless(ScopeHelper::canAccessMember(Member::findOrFail($validated['leader_id'])), 403);
+        }
         $ministry->update($validated);
 
-        if ($request->has('member_ids') && is_array($request->member_ids)) {
-            $ministry->members()->sync($request->member_ids);
+        if (array_key_exists('member_ids', $validated)) {
+            $this->assertMembersInScope($validated['member_ids']);
+            $ministry->members()->sync($validated['member_ids']);
         }
 
-        return response()->json(
-            $ministry->load(['leader:id,first_name,last_name,photo,phone'])->loadCount('members')
-        );
+        $leaderColumns = auth()->user()->hasPermission('members.view')
+            ? 'id,first_name,last_name,photo,phone'
+            : 'id,first_name,last_name,photo';
+        $ministry->load(['leader' => fn ($q) => $q->select(explode(',', $leaderColumns))])->loadCount('members');
+        return response()->json($ministry);
     }
 
     /**
@@ -134,7 +179,7 @@ class MinistryController extends Controller
      */
     public function destroy($id)
     {
-        $ministry = Ministry::findOrFail($id);
+        $ministry = $this->visibleMinistry((int) $id);
         $ministry->members()->detach();
         $ministry->delete();
 
@@ -146,19 +191,22 @@ class MinistryController extends Controller
      */
     public function assignMembers(Request $request, $id)
     {
-        $ministry = Ministry::findOrFail($id);
+        $ministry = $this->visibleMinistry((int) $id);
 
         $request->validate([
             'member_ids' => 'required|array',
             'member_ids.*' => 'exists:members,id',
         ]);
+        $this->assertMembersInScope($request->member_ids);
 
         $ministry->members()->syncWithoutDetaching($request->member_ids);
 
         return response()->json([
             'message' => 'Membres assignés avec succès.',
             'members_count' => $ministry->members()->count(),
-            'members' => $ministry->members()->select(['members.id', 'first_name', 'last_name', 'photo', 'phone'])->get()
+            'members' => auth()->user()->hasPermission('members.view')
+                ? $ministry->members()->select(['members.id', 'first_name', 'last_name', 'photo', 'phone'])->get()
+                : [],
         ]);
     }
 
@@ -167,7 +215,8 @@ class MinistryController extends Controller
      */
     public function removeMember($id, $memberId)
     {
-        $ministry = Ministry::findOrFail($id);
+        $ministry = $this->visibleMinistry((int) $id);
+        abort_unless(ScopeHelper::canAccessMember(Member::findOrFail($memberId)), 403);
         $ministry->members()->detach($memberId);
 
         return response()->json([

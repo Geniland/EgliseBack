@@ -10,23 +10,18 @@ use App\Models\FinancialCategory;
 use App\Models\Transaction;
 use App\Support\ScopeHelper;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 
 class FinanceIsolationTest extends TestCase
 {
-    use DatabaseTransactions;
-
-    private static bool $seedsInited = false;
+    use RefreshDatabase;
 
     protected function setUp(): void
     {
         parent::setUp();
-        if (!self::$seedsInited) {
-            try { \Artisan::call('db:seed', ['--class' => 'RoleSeeder', '--force' => true]); } catch (\Throwable $e) {}
-            try { \Artisan::call('db:seed', ['--class' => 'PermissionSeeder', '--force' => true]); } catch (\Throwable $e) {}
-            try { \Artisan::call('db:seed', ['--class' => 'RolePermissionSeeder', '--force' => true]); } catch (\Throwable $e) {}
-            self::$seedsInited = true;
-        }
+        \Artisan::call('db:seed', ['--class' => 'RoleSeeder', '--force' => true]);
+        \Artisan::call('db:seed', ['--class' => 'PermissionSeeder', '--force' => true]);
+        \Artisan::call('db:seed', ['--class' => 'RolePermissionSeeder', '--force' => true]);
     }
 
     private function createUser(string $name, string $email, int $roleId, ?int $parentUserId = null, ?string $church = null): User

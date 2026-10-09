@@ -5,6 +5,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Str;
+use Endroid\QrCode\QrCode;
+use Endroid\QrCode\Writer\PngWriter;
+use Endroid\QrCode\Encoding\Encoding;
+use Endroid\QrCode\ErrorCorrectionLevel;
 
 class Member extends Model
 {
@@ -13,6 +18,7 @@ class Member extends Model
     protected $fillable = [
 
         'member_code',
+        'qr_token',
         'church_id',
         'user_id',
 
@@ -120,5 +126,76 @@ class Member extends Model
     public function user()
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    /**
+     * Génère un token QR unique pour le membre s'il n'en a pas déjà un.
+     */
+    public function ensureQrToken(): string
+    {
+        if (!empty($this->qr_token)) {
+            return $this->qr_token;
+        }
+        do {
+            $token = 'MQR-' . Str::random(32);
+        } while (self::where('qr_token', $token)->exists());
+
+        $this->qr_token = $token;
+        $this->save();
+
+        return $token;
+    }
+
+    /**
+     * Retourne le payload JSON embarqué dans le QR code.
+     */
+    public function getQrPayload(): array
+    {
+        return [
+            'type' => 'member',
+            't' => $this->ensureQrToken(),
+            'mid' => $this->id,
+            'code' => $this->member_code,
+            'church_id' => $this->church_id,
+            'fn' => $this->first_name,
+            'ln' => $this->last_name,
+            'v' => 1,
+        ];
+    }
+
+    /**
+     * Retourne les données du QR code sous forme de chaîne JSON sérialisée.
+     */
+    public function getQrCodeDataString(): string
+    {
+        return json_encode($this->getQrPayload(), JSON_UNESCAPED_SLASHES);
+    }
+
+    /**
+     * Génère l'image QR code (PNG en base64 data URL) pour affichage côté client.
+     */
+    public function getQrCodeDataUrl(int $size = 280): string
+    {
+        $data = $this->getQrCodeDataString();
+
+        $qrCode = new QrCode(
+            data: $data,
+            encoding: new Encoding('UTF-8'),
+            errorCorrectionLevel: ErrorCorrectionLevel::Medium,
+            size: $size,
+            margin: 6,
+        );
+
+        $writer = new PngWriter();
+        $result = $writer->write($qrCode);
+        return 'data:image/png;base64,' . base64_encode($result->getString());
+    }
+
+    /**
+     * Scope permettant de retrouver un membre via son QR token.
+     */
+    public function scopeByQrToken($query, string $token)
+    {
+        return $query->where('qr_token', $token);
     }
 }

@@ -201,36 +201,38 @@ class DashboardController extends Controller
                 ->count();
         }
 
-        return response()->json([
-            'members_total' => [
+        $user = $request->user();
+
+        return response()->json(array_filter([
+            'members_total' => $user->hasPermission('members.view') ? [
                 'value' => $totalMembers,
                 'growth' => $membersGrowth,
                 'new_this_month' => $newMembersThisMonth,
                 'sparkline' => $memberSparkline,
-            ],
-            'presences_month' => [
+            ] : null,
+            'presences_month' => $user->hasPermission('attendance.view') ? [
                 'value' => $presencesThisMonth,
                 'growth' => $presencesGrowth,
                 'attendance_rate' => $attendanceRate,
                 'sparkline' => $presenceSparkline,
-            ],
-            'donations' => [
+            ] : null,
+            'donations' => $user->hasPermission('finance.view') ? [
                 'value' => $donationsThisMonth,
                 'currency' => $currency,
                 'growth' => $donationsGrowth,
                 'sparkline' => $donationsSparkline,
-            ],
-            'events' => [
+            ] : null,
+            'events' => $user->hasPermission('events.view') ? [
                 'value' => $totalUpcomingEvents,
                 'growth' => $eventsGrowth,
                 'sparkline' => $eventsSparkline,
-            ],
-            'pending_requests' => [
+            ] : null,
+            'pending_requests' => $user->hasPermission('finance.view') ? [
                 'value' => $pendingRequests,
                 'growth' => 0,
                 'sparkline' => $pendingSparkline,
-            ],
-        ]);
+            ] : null,
+        ], fn ($value) => $value !== null));
     }
 
     /**
@@ -313,7 +315,7 @@ class DashboardController extends Controller
             }
         }
 
-        return response()->json([
+        $payload = [
             'period' => $period,
             'labels' => $labels,
             'datasets' => [
@@ -331,7 +333,15 @@ class DashboardController extends Controller
                     'yAxisID' => 'y1',
                 ],
             ],
-        ]);
+        ];
+        if (!$request->user()->hasPermission('attendance.view')) {
+            $payload['datasets'] = array_values(array_filter($payload['datasets'], fn ($dataset) => $dataset['borderColor'] !== '#3B82F6'));
+        }
+        if (!$request->user()->hasPermission('finance.view')) {
+            $payload['datasets'] = array_values(array_filter($payload['datasets'], fn ($dataset) => $dataset['borderColor'] !== '#10B981'));
+        }
+
+        return response()->json($payload);
     }
 
     /**
@@ -696,7 +706,20 @@ class DashboardController extends Controller
             return strtotime($b['created_at']) - strtotime($a['created_at']);
         });
 
-        return response()->json(array_slice($activities, 0, $limit));
+        $user = $request->user();
+        $activities = array_values(array_filter($activities, function ($activity) use ($user) {
+            $permission = match ($activity['type']) {
+                'new_member' => 'members.view',
+                'donation' => 'finance.view',
+                'event' => 'events.view',
+                'live' => 'live_streams.view',
+                default => null,
+            };
+
+            return $permission && $user->hasPermission($permission);
+        }));
+
+        return response()->json(array_slice($activities, 0, max(1, min($limit, 50))));
     }
 
     /**
@@ -742,17 +765,10 @@ class DashboardController extends Controller
         $phoneMembersCount = (clone $membersQuery)->whereNotNull('phone')->where('phone', '!=', '')->count();
 
         // 5. Assistant Virtuel IA (Conversations créées)
-        $assistantConvQuery = AssistantConversation::query();
-        if (!ScopeHelper::isSuperAdmin()) {
-            if ($isBlocked) {
-                $assistantConvQuery->whereRaw('0 = 1');
-            } elseif ($teamIds !== null) {
-                $assistantConvQuery->whereIn('user_id', $teamIds);
-            }
-        }
+        $assistantConvQuery = AssistantConversation::query()->where('user_id', $request->user()->id);
         $aiConversationsCount = $assistantConvQuery->count();
 
-        return response()->json([
+        $payload = [
             'smart_terminals' => [
                 'label' => 'Régie & Diffusions',
                 'status' => $activeLive ? 'En direct' : ($totalLives > 0 ? 'Disponible' : 'Non configuré'),
@@ -783,6 +799,18 @@ class DashboardController extends Controller
                 'value' => $aiConversationsCount . ' échange(s) pastoral(aux)',
                 'color' => '#8B5CF6',
             ],
-        ]);
+        ];
+        $user = $request->user();
+        if (!$user->hasPermission('live_streams.view')) {
+            unset($payload['smart_terminals']);
+        }
+        if (!$user->hasPermission('members.view')) {
+            unset($payload['rfid_cards'], $payload['telephone']);
+        }
+        if (!$user->hasPermission('attendance.view')) {
+            unset($payload['qr_code']);
+        }
+
+        return response()->json($payload);
     }
 }

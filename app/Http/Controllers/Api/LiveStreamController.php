@@ -13,6 +13,24 @@ use Illuminate\Http\Request;
 
 class LiveStreamController extends Controller
 {
+    private function findVisibleStream(LiveStream $liveStream): LiveStream
+    {
+        $user = auth()->user();
+        $canManageStreams = $user && $user->hasPermission(
+            'live_streams.create|live_streams.update|live_streams.delete|live_streams.publish|live_streams.end|live_streams.configure|live_streams.replay'
+        );
+
+        if (!$canManageStreams && $liveStream->status !== 'live') {
+            abort(404);
+        }
+
+        if (!$canManageStreams && $liveStream->status === 'live') {
+            return $liveStream;
+        }
+
+        return ScopeHelper::findOwnedOrFail(LiveStream::class, $liveStream->id);
+    }
+
     /**
      * Extracts YouTube Video ID from a given URL
      */
@@ -23,9 +41,19 @@ class LiveStreamController extends Controller
         return $match[1] ?? null;
     }
 
-    public function index()
+    public function index(Request $request)
     {
-        $lives = LiveStream::with('event')->orderBy('created_at', 'desc')->get();
+        $query = LiveStream::with('event');
+        $user = $request->user();
+        $canManageStreams = $user->hasPermission(
+            'live_streams.create|live_streams.update|live_streams.delete|live_streams.publish|live_streams.end|live_streams.configure|live_streams.replay'
+        );
+        if ($canManageStreams) {
+            ScopeHelper::applyOwnedByScope($query);
+        } else {
+            $query->where('status', 'live');
+        }
+        $lives = $query->orderByDesc('created_at')->get();
         return LiveStreamResource::collection($lives);
     }
 
@@ -51,11 +79,13 @@ class LiveStreamController extends Controller
 
     public function show(LiveStream $liveStream)
     {
+        $liveStream = $this->findVisibleStream($liveStream);
         return new LiveStreamResource($liveStream->load('event'));
     }
 
     public function update(UpdateLiveStreamRequest $request, LiveStream $liveStream)
     {
+        $liveStream = $this->findVisibleStream($liveStream);
         $validated = $request->validated();
 
         if (isset($validated['youtube_url'])) {
@@ -69,12 +99,14 @@ class LiveStreamController extends Controller
 
     public function destroy(LiveStream $liveStream)
     {
+        $liveStream = $this->findVisibleStream($liveStream);
         $liveStream->delete();
         return response()->noContent();
     }
 
     public function status(LiveStream $liveStream)
     {
+        $liveStream = $this->findVisibleStream($liveStream);
         return response()->json([
             'status' => $liveStream->status,
         ]);
@@ -82,6 +114,7 @@ class LiveStreamController extends Controller
 
     public function start(LiveStream $liveStream)
     {
+        $liveStream = $this->findVisibleStream($liveStream);
         $liveStream->update([
             'status' => 'live',
             'started_at' => now(),
@@ -92,6 +125,7 @@ class LiveStreamController extends Controller
 
     public function end(LiveStream $liveStream)
     {
+        $liveStream = $this->findVisibleStream($liveStream);
         $liveStream->update([
             'status' => 'ended',
             'ended_at' => now(),
@@ -113,6 +147,7 @@ class LiveStreamController extends Controller
 
     public function publishAsResource(Request $request, LiveStream $liveStream)
     {
+        $liveStream = $this->findVisibleStream($liveStream);
         if (!in_array($liveStream->status, ['ended', 'processing'])) {
             return response()->json(['message' => 'Seul un live terminé peut être publié en ressource.'], 400);
         }

@@ -4,7 +4,7 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class ScanAttendanceRequest extends FormRequest
+class ScanMemberQrRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -15,11 +15,12 @@ class ScanAttendanceRequest extends FormRequest
     {
         $all = $this->all();
 
-        // 1. Si payload JSON QR contient {t: ...} on déploie
         $candidates = [
             $all['qr_payload'] ?? null,
             $all['payload'] ?? null,
             $all['data'] ?? null,
+            $all['member_qr'] ?? null,
+            $all['qr'] ?? null,
         ];
         foreach ($candidates as $c) {
             if (is_string($c) && ($c[0] ?? '') === '{') {
@@ -34,14 +35,14 @@ class ScanAttendanceRequest extends FormRequest
             }
         }
 
-        // Raccourci token (t) ou session (s)
-        if (!empty($all['t']) && empty($all['qr_token'])) $all['qr_token'] = $all['t'];
-        if (!empty($all['token']) && empty($all['qr_token'])) $all['qr_token'] = $all['token'];
-        if (!empty($all['qr']) && empty($all['qr_token'])) $all['qr_token'] = $all['qr'];
-        if (!empty($all['code']) && empty($all['member_code'])) $all['member_code'] = $all['code'];
+        if (!empty($all['t']) && empty($all['member_qr_token'])) $all['member_qr_token'] = $all['t'];
+        if (!empty($all['token']) && empty($all['member_qr_token'])) $all['member_qr_token'] = $all['token'];
+        if (!empty($all['member_token']) && empty($all['member_qr_token'])) $all['member_qr_token'] = $all['member_token'];
         if (!empty($all['mid']) && empty($all['member_id'])) $all['member_id'] = $all['mid'];
+        if (!empty($all['code']) && empty($all['member_code'])) $all['member_code'] = $all['code'];
+        if (!empty($all['sid']) && empty($all['session_id'])) $all['session_id'] = $all['sid'];
+        if (!empty($all['s']) && empty($all['session_id'])) $all['session_id'] = $all['s'];
 
-        // Sous-objet coords (plugin Capacitor / HTML5 coords)
         $coords = $all['coords'] ?? null;
         if (is_array($coords)) {
             if (empty($all['latitude']) && isset($coords['latitude'])) $all['latitude'] = $coords['latitude'];
@@ -50,24 +51,10 @@ class ScanAttendanceRequest extends FormRequest
             if (empty($all['latitude']) && isset($coords['lat'])) $all['latitude'] = $coords['lat'];
             if (empty($all['longitude']) && isset($coords['lng'])) $all['longitude'] = $coords['lng'];
         }
-        if (is_string($coords) && ($coords[0] ?? '') === '{') {
-            try {
-                $json = json_decode($coords, true, 3);
-                if (is_array($json)) {
-                    if (empty($all['latitude']) && isset($json['latitude'])) $all['latitude'] = $json['latitude'];
-                    if (empty($all['longitude']) && isset($json['longitude'])) $all['longitude'] = $json['longitude'];
-                    if (empty($all['accuracy']) && isset($json['accuracy'])) $all['accuracy'] = $json['accuracy'];
-                }
-            } catch (\Throwable) { /* ignore */ }
-        }
-
-        // Alias classiques lat/lng, long
         if (empty($all['latitude']) && isset($all['lat'])) $all['latitude'] = $all['lat'];
         if (empty($all['longitude']) && isset($all['lng'])) $all['longitude'] = $all['lng'];
         if (empty($all['longitude']) && isset($all['long'])) $all['longitude'] = $all['long'];
         if (empty($all['longitude']) && isset($all['lon'])) $all['longitude'] = $all['lon'];
-
-        // Coordonnées dans position ou gps (array)
         foreach (['position', 'gps', 'location'] as $k) {
             $sub = $all[$k] ?? null;
             if (is_array($sub)) {
@@ -77,7 +64,6 @@ class ScanAttendanceRequest extends FormRequest
             }
         }
 
-        // Nettoyer valeurs vides
         foreach (['latitude', 'longitude', 'accuracy'] as $k) {
             if (array_key_exists($k, $all) && ($all[$k] === '' || $all[$k] === null)) {
                 $all[$k] = null;
@@ -90,9 +76,10 @@ class ScanAttendanceRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'qr_token' => 'required|string|exists:attendance_sessions,qr_token',
-            'member_code' => 'required_without:member_id|string|exists:members,member_code',
-            'member_id' => 'required_without:member_code|integer|exists:members,id',
+            'session_id' => 'required|integer|exists:attendance_sessions,id',
+            'member_qr_token' => 'required_without:member_id,member_code|string|exists:members,qr_token',
+            'member_code' => 'required_without:member_qr_token,member_id|string|exists:members,member_code',
+            'member_id' => 'required_without:member_qr_token,member_code|integer|exists:members,id',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
             'accuracy' => 'nullable|numeric|min:0',

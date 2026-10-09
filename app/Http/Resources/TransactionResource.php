@@ -100,27 +100,23 @@ class TransactionResource extends JsonResource
                 return $this->creator ? [
                     'id' => $this->creator->id,
                     'name' => $this->creator->name,
-                    'email' => $this->creator->email,
                 ] : null;
             }),
             'approver' => $this->relationLoaded('approver')
                 ? ($this->approver ? [
                     'id' => $this->approver->id,
                     'name' => $this->approver->name,
-                    'email' => $this->approver->email,
                 ] : null)
                 : $this->whenLoaded('approver', function () {
                     return $this->approver ? [
                         'id' => $this->approver->id,
                         'name' => $this->approver->name,
-                        'email' => $this->approver->email,
                     ] : null;
                 }),
             'updater' => $this->whenLoaded('updater', function () {
                 return $this->updater ? [
                     'id' => $this->updater->id,
                     'name' => $this->updater->name,
-                    'email' => $this->updater->email,
                 ] : null;
             }),
 

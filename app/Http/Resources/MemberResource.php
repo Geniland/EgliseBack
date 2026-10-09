@@ -18,6 +18,8 @@ class MemberResource extends JsonResource
 
             'member_code' => $this->member_code,
 
+            'qr_token' => $this->qr_token,
+
             'first_name' => $this->first_name,
 
             'last_name' => $this->last_name,
@@ -80,9 +82,15 @@ class MemberResource extends JsonResource
 
             'ministries' => $this->whenLoaded('ministries'),
 
-            'created_by' => $this->whenLoaded('creator'),
+            'created_by' => $this->whenLoaded('creator', fn () => $this->creator ? [
+                'id' => $this->creator->id,
+                'name' => $this->creator->name,
+            ] : null),
 
-            'updated_by' => $this->whenLoaded('updater'),
+            'updated_by' => $this->whenLoaded('updater', fn () => $this->updater ? [
+                'id' => $this->updater->id,
+                'name' => $this->updater->name,
+            ] : null),
 
             'created_at' => $this->created_at?->format('d/m/Y H:i'),
 

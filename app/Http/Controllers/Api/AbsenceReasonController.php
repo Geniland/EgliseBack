@@ -39,6 +39,7 @@ class AbsenceReasonController extends Controller
 
     public function update(Request $request, AbsenceReason $absenceReason)
     {
+        $absenceReason = ScopeHelper::findOwnedOrFail(AbsenceReason::class, $absenceReason->id);
         $id = $absenceReason->id;
         $d = $request->validate([
             'code' => "sometimes|required|string|max:50|unique:absence_reasons,code,{$id}",
@@ -54,6 +55,7 @@ class AbsenceReasonController extends Controller
 
     public function destroy(AbsenceReason $absenceReason)
     {
+        $absenceReason = ScopeHelper::findOwnedOrFail(AbsenceReason::class, $absenceReason->id);
         $absenceReason->delete();
         return response()->json(['message' => 'Motif supprimé']);
     }

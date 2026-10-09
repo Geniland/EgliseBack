@@ -20,29 +20,23 @@ return new class extends Migration
                   ->nullOnDelete();
         });
 
-        // 1. Rétro-remplissage depuis users.church_id (si member.user_id est renseigné)
-        DB::statement("
-            UPDATE members m
-            INNER JOIN users u ON m.user_id = u.id
-            SET m.church_id = u.church_id
-            WHERE m.church_id IS NULL AND u.church_id IS NOT NULL
-        ");
+        // Rétro-remplissage portable : SQLite ne prend pas en charge UPDATE ... JOIN.
+        $userChurchIds = DB::table('users')
+            ->whereNotNull('church_id')
+            ->pluck('church_id', 'id');
+        $topLevelChurchIds = DB::table('churches')
+            ->whereNull('parent_church_id')
+            ->pluck('id', 'created_by');
 
-        // 2. Rétro-remplissage depuis l'église du créateur (si member.created_by est renseigné)
-        DB::statement("
-            UPDATE members m
-            INNER JOIN users u ON m.created_by = u.id
-            SET m.church_id = u.church_id
-            WHERE m.church_id IS NULL AND u.church_id IS NOT NULL
-        ");
+        foreach (DB::table('members')->whereNull('church_id')->get(['id', 'user_id', 'created_by']) as $member) {
+            $churchId = $userChurchIds[$member->user_id] ?? null;
+            $churchId ??= $userChurchIds[$member->created_by] ?? null;
+            $churchId ??= $topLevelChurchIds[$member->created_by] ?? null;
 
-        // 3. Rétro-remplissage pour les créateurs qui sont administrateurs ayant créé une église
-        DB::statement("
-            UPDATE members m
-            INNER JOIN churches c ON m.created_by = c.created_by
-            SET m.church_id = c.id
-            WHERE m.church_id IS NULL AND c.parent_church_id IS NULL
-        ");
+            if ($churchId) {
+                DB::table('members')->where('id', $member->id)->update(['church_id' => $churchId]);
+            }
+        }
     }
 
     /**

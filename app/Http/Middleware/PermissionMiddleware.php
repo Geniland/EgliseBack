@@ -30,12 +30,7 @@ class PermissionMiddleware
             ], 403);
         }
 
-        $permissions = explode('|', $permission);
-
-        $hasPermission = $user->role
-                            ->permissions()
-                            ->whereIn('name', $permissions)
-                            ->exists();
+        $hasPermission = $user->hasPermission($permission);
 
         if (!$hasPermission) {
             return response()->json([

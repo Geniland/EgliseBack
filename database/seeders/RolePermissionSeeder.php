@@ -49,6 +49,7 @@ class RolePermissionSeeder extends Seeder
                       ->orWhere('module', 'members')
                       ->orWhere('module', 'events')
                       ->orWhere('module', 'attendance')
+                      ->orWhere('module', 'Présences')
                       ->orWhere('module', 'finance')
                       ->orWhere('module', 'resources')
                       ->orWhere('module', 'formations')
@@ -85,6 +86,8 @@ class RolePermissionSeeder extends Seeder
 
                 'attendance.view',
                 'attendance.create',
+                'attendance.update',
+                'attendance.scan',
 
                 'events.view',
                 'events.create',
@@ -147,6 +150,9 @@ class RolePermissionSeeder extends Seeder
 
                 'attendance.view',
                 'attendance.create',
+                'attendance.update',
+                'attendance.delete',
+                'attendance.scan',
 
                 'events.view',
                 'events.create',

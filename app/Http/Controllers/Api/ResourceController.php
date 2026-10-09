@@ -102,7 +102,8 @@ class ResourceController extends Controller
 
     public function show($id)
     {
-        $resource = Resource::with(['category', 'creator'])->findOrFail($id);
+        $resource = ScopeHelper::findOwnedOrFail(Resource::class, $id, 'church_id');
+        $resource->load(['category', 'creator']);
         return response()->json($this->formatResource($resource, auth()->user()));
     }
 
@@ -168,7 +169,7 @@ class ResourceController extends Controller
      */
     public function download($id)
     {
-        $resource = Resource::findOrFail($id);
+        $resource = ScopeHelper::findOwnedOrFail(Resource::class, $id, 'church_id');
         $user = auth()->user();
         $access = $this->checkAccess($resource, $user);
 
@@ -233,6 +234,10 @@ class ResourceController extends Controller
     {
         $access = $this->checkAccess($resource, $user);
         $data = $resource->toArray();
+        $data['creator'] = $resource->creator ? [
+            'id' => $resource->creator->id,
+            'name' => $resource->creator->name,
+        ] : null;
         $data['can_access'] = $access['can_access'];
         $data['is_admin_bypass'] = $access['is_admin_bypass'];
         $data['is_purchased'] = $access['is_purchased'];

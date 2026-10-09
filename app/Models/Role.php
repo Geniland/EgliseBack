@@ -32,7 +32,8 @@ class Role extends Model
  */
     public function permissions()
     {
-        return $this->belongsToMany(Permission::class);
+        return $this->belongsToMany(Permission::class)
+            ->where('permissions.status', true);
     }
 
     public function scopeActive($query)
